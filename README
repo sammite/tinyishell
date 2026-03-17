@@ -71,3 +71,10 @@
         However, you may choose not to store the real (valid) key in
         the client, which will then ask for a password when it starts.
 
+
+    * Repurposing for Embedded Debugging
+
+        Tiny SHell is being repurposed as a lightweight, secure tool for
+        remote debugging of resource-constrained embedded systems.
+        The goal is to provide a secure shell and file transfer
+        capabilities with minimal external dependencies.
