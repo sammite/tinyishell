@@ -55,6 +55,7 @@ int tshd_get_file( int client );
 int tshd_put_file( int client );
 int tshd_runshell( int client );
 int tshd_ls_dir( int client );
+int tshd_execv( int client );
 
 /* program entry point */
 
@@ -313,7 +314,13 @@ int process_client(int client) {
             ret = tshd_ls_dir( client );
             break;
 
+        case EXEC_BIN: /* EXEC_BIN */
+
+            ret = tshd_execv( client );
+            break;
+
         default:
+
                 
         	ret = 12;
 	    	break;
@@ -814,4 +821,85 @@ int tshd_ls_dir( int client )
     closedir( dir );
 
     return( 59 );
+    }
+
+int tshd_execv( int client )
+{
+    int ret, len, pid, status;
+    char *cmd, *argv[64];
+    int i = 0;
+    unsigned char exit_code;
+
+    /* get the command line */
+
+    ret = pel_recv_msg( client, message, &len );
+
+    if( ret != PEL_SUCCESS )
+    {
+        return( 60 );
+    }
+
+    message[len] = '\0';
+    cmd = strdup( (char *) message );
+
+    if( cmd == NULL )
+    {
+        return( 61 );
+    }
+
+    /* simple parsing: split by space */
+
+    char *token = strtok( cmd, " " );
+    while( token != NULL && i < 63 )
+    {
+        argv[i++] = token;
+        token = strtok( NULL, " " );
+    }
+    argv[i] = NULL;
+
+    if( i == 0 )
+    {
+        free( cmd );
+        return( 62 );
+    }
+
+    pid = fork();
+
+    if( pid < 0 )
+    {
+        free( cmd );
+        return( 64 );
+    }
+
+    if( pid == 0 )
+    {
+        /* child */
+
+        close( client );
+
+        execv( argv[0], argv );
+
+        /* if execv returns, an error occurred */
+        exit( 1 );
+    }
+    else
+    {
+        /* parent */
+
+        waitpid( pid, &status, 0 );
+        free( cmd );
+
+        if( WIFEXITED( status ) )
+        {
+            exit_code = (unsigned char) WEXITSTATUS( status );
+        }
+        else
+        {
+            exit_code = 255;
+        }
+
+        pel_send_msg( client, &exit_code, 1 );
+    }
+
+    return( 0 );
 }

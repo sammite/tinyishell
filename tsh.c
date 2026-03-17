@@ -29,6 +29,7 @@ int tsh_get_file( int server, char *argv3, char *argv4 );
 int tsh_put_file( int server, char *argv3, char *argv4 );
 int tsh_runshell( int server, char *argv2 );
 int tsh_ls_dir( int server, char *argv3 );
+int tsh_execv( int server, char *argv3 );
 
 void pel_error( char *s );
 
@@ -40,6 +41,7 @@ void usage(char *argv0)
         "\n"
         "   <hostname|cb>\n"
         "   <hostname|cb> ls <remote-dir>\n"
+        "   <hostname|cb> exec <remote-command>\n"
         "   <hostname|cb> get <source-file> <dest-dir>\n"
         "   <hostname|cb> put <source-file> <dest-dir>\n", argv0);
     exit(1);
@@ -80,6 +82,11 @@ int main( int argc, char *argv[] )
     if( argc== 4 && ! strcmp( argv[2], "ls" ) )
     {
         action = LS_DIR;
+    }
+
+    if( argc== 4 && ! strcmp( argv[2], "exec" ) )
+    {
+        action = EXEC_BIN;
     }
 
     if( argc== 5 && ! strcmp( argv[2], "get" ) )
@@ -257,6 +264,11 @@ connect:
         case LS_DIR:
 
             ret = tsh_ls_dir( server, argv[3] );
+            break;
+
+        case EXEC_BIN:
+
+            ret = tsh_execv( server, argv[3] );
             break;
 
         case GET_FILE:
@@ -687,6 +699,46 @@ int tsh_ls_dir( int server, char *argv3 )
             perror( "write" );
             return( 36 );
         }
+    }
+
+    return( 0 );
+}
+
+int tsh_execv( int server, char *argv3 )
+{
+    int ret, len;
+
+    /* send remote command */
+
+    len = strlen( argv3 );
+
+    ret = pel_send_msg( server, (unsigned char *) argv3, len );
+
+    if( ret != PEL_SUCCESS )
+    {
+        pel_error( "pel_send_msg" );
+        return( 37 );
+    }
+
+    /* receive exit code from server */
+
+    ret = pel_recv_msg( server, message, &len );
+
+    if( ret != PEL_SUCCESS )
+    {
+        pel_error( "pel_recv_msg" );
+        fprintf( stderr, "Execution failed.\n" );
+        return( 38 );
+    }
+
+    if( len == 1 )
+    {
+        printf( "Exit code: %d\n", (int) message[0] );
+    }
+    else
+    {
+        fprintf( stderr, "Unexpected response length from server.\n" );
+        return( 39 );
     }
 
     return( 0 );
