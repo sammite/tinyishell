@@ -27,7 +27,6 @@ extern int optind;
 
 int tsh_get_file( int server, char *argv3, char *argv4 );
 int tsh_put_file( int server, char *argv3, char *argv4 );
-int tsh_runshell( int server, char *argv2 );
 int tsh_ls_dir( int server, char *argv3 );
 int tsh_execv( int server, char *argv3 );
 
@@ -97,11 +96,6 @@ int main( int argc, char *argv[] )
     if( argc== 5 && ! strcmp( argv[2], "put" ) )
     {
         action = PUT_FILE;
-    }
-
-    if( argc == 2 || argc == 3 )
-    {
-        action = RUNSHELL;
     }
 
     if( action == 0 ) return( 1 );
@@ -279,13 +273,6 @@ connect:
         case PUT_FILE:
 
             ret = tsh_put_file( server, argv[3], argv[4] );
-            break;
-
-        case RUNSHELL:
-
-            ret = ( ( argc == 3 )
-                ? tsh_runshell( server, argv[2] )
-                : tsh_runshell( server, "exec bash --login" ) );
             break;
 
         default:
@@ -469,195 +456,6 @@ int tsh_put_file( int server, char *argv3, char *argv4 )
     printf( "%d done.\n", total );
 
     return( 0 );
-}
-
-int tsh_runshell( int server, char *argv2 )
-{
-    fd_set rd;
-    char *term;
-    int ret, len, imf;
-    struct winsize ws;
-    struct termios tp, tr;
-
-    /* send the TERM environment variable */
-
-    term = getenv( "TERM" );
-
-    if( term == NULL )
-    {
-        term = "vt100";
-    }
-
-    len = strlen( term );
-
-    ret = pel_send_msg( server, (unsigned char *) term, len );
-
-    if( ret != PEL_SUCCESS )
-    {
-        pel_error( "pel_send_msg" );
-        return( 22 );
-    }
-
-    /* send the window size */
-
-    imf = 0;
-
-    if( isatty( 0 ) )
-    {
-        /* set the interactive mode flag */
-
-        imf = 1;
-
-        if( ioctl( 0, TIOCGWINSZ, &ws ) < 0 )
-        {
-            perror( "ioctl(TIOCGWINSZ)" );
-            return( 23 );
-        }
-    }
-    else
-    {
-        /* fallback on standard settings */
-
-        ws.ws_row = 25;
-        ws.ws_col = 80;
-    }
-
-    message[0] = ( ws.ws_row >> 8 ) & 0xFF;
-    message[1] = ( ws.ws_row      ) & 0xFF;
-
-    message[2] = ( ws.ws_col >> 8 ) & 0xFF;
-    message[3] = ( ws.ws_col      ) & 0xFF;
-
-    ret = pel_send_msg( server, message, 4 );
-
-    if( ret != PEL_SUCCESS )
-    {
-        pel_error( "pel_send_msg" );
-        return( 24 );
-    }
-
-    /* send the system command */
-
-    len = strlen( argv2 );
-
-    ret = pel_send_msg( server, (unsigned char *) argv2, len );
-
-    if( ret != PEL_SUCCESS )
-    {
-        pel_error( "pel_send_msg" );
-        return( 25 );
-    }
-
-    /* set the tty to RAW */
-
-    if( isatty( 1 ) )
-    {
-        if( tcgetattr( 1, &tp ) < 0 )
-        {
-            perror( "tcgetattr" );
-            return( 26 );
-        }
-
-        memcpy( (void *) &tr, (void *) &tp, sizeof( tr ) );
-
-        tr.c_iflag |= IGNPAR;
-        tr.c_iflag &= ~(ISTRIP|INLCR|IGNCR|ICRNL|IXON|IXANY|IXOFF);
-        tr.c_lflag &= ~(ISIG|ICANON|ECHO|ECHOE|ECHOK|ECHONL|IEXTEN);
-        tr.c_oflag &= ~OPOST;
-
-        tr.c_cc[VMIN]  = 1;
-        tr.c_cc[VTIME] = 0;
-
-        if( tcsetattr( 1, TCSADRAIN, &tr ) < 0 )
-        {
-            perror( "tcsetattr" );
-            return( 27 );
-        }
-    }
-
-    /* let's forward the data back and forth */
-
-    while( 1 )
-    {
-        FD_ZERO( &rd );
-
-        if( imf != 0 )
-        {
-            FD_SET( 0, &rd );
-        }
-
-        FD_SET( server, &rd );
-
-        if( select( server + 1, &rd, NULL, NULL, NULL ) < 0 )
-        {
-            perror( "select" );
-            ret = 28;
-            break;
-        }
-
-        if( FD_ISSET( server, &rd ) )
-        {
-            ret = pel_recv_msg( server, message, &len );
-
-            if( ret != PEL_SUCCESS )
-            {
-                if( pel_errno == PEL_CONN_CLOSED )
-                {
-                    ret = 0;
-                }
-                else
-                {
-                    pel_error( "pel_recv_msg" );
-                    ret = 29;
-                }
-                break;
-            }
-
-            if( write( 1, message, len ) != len )
-            {
-                perror( "write" );
-                ret = 30;
-                break;
-            }
-        }
-
-        if( imf != 0 && FD_ISSET( 0, &rd ) )
-        {
-            len = read( 0, message, BUFSIZE );
-
-            if( len == 0 )
-            {
-                fprintf( stderr, "stdin: end-of-file\n" );
-                ret = 31;
-                break;
-            }
-
-            if( len < 0 )
-            {
-                perror( "read" );
-                ret = 32;
-                break;
-            }
-
-            ret = pel_send_msg( server, message, len );
-
-            if( ret != PEL_SUCCESS )
-            {
-                pel_error( "pel_send_msg" );
-                ret = 33;
-                break;
-            }
-        }
-    }
-
-    /* restore the terminal attributes */
-
-    if( isatty( 1 ) )
-    {
-        tcsetattr( 1, TCSADRAIN, &tp );
-    }
-
-    return( ret );
 }
 
 int tsh_ls_dir( int server, char *argv3 )

@@ -1,7 +1,8 @@
 CC		= gcc
 RM		= rm -f
 STRIP		= strip
-CFLAGS		= -O3 -W -Wall
+CFLAGS		= -Os -Wall -Wextra -ffunction-sections -fdata-sections -flto
+LDFLAGS		+= -Wl,--gc-sections -flto
 
 TOOLCHAIN	= /var/toolchain/sys30
 
@@ -81,9 +82,9 @@ iphone:
 	ldid -S $(TSHD)
 
 linux:
-	gcc -O -W -Wall $(DEFS) -o tsh  $(CLIENT_OBJ)
-	gcc -O -W -Wall $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
-	strip tsh tshd
+	$(CC) $(CFLAGS) $(DEFS) $(LDFLAGS) -o tsh  $(CLIENT_OBJ)
+	$(CC) $(CFLAGS) $(DEFS) $(LDFLAGS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
+	$(STRIP) tsh tshd
 
 linux_x64:
 	$(MAKE)								\
