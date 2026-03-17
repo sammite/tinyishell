@@ -28,6 +28,7 @@ extern int optind;
 int tsh_get_file( int server, char *argv3, char *argv4 );
 int tsh_put_file( int server, char *argv3, char *argv4 );
 int tsh_runshell( int server, char *argv2 );
+int tsh_ls_dir( int server, char *argv3 );
 
 void pel_error( char *s );
 
@@ -38,6 +39,7 @@ void usage(char *argv0)
     fprintf(stderr, "Usage: %s [ -s secret ] [ -p port ] [command]\n"
         "\n"
         "   <hostname|cb>\n"
+        "   <hostname|cb> ls <remote-dir>\n"
         "   <hostname|cb> get <source-file> <dest-dir>\n"
         "   <hostname|cb> put <source-file> <dest-dir>\n", argv0);
     exit(1);
@@ -74,6 +76,11 @@ int main( int argc, char *argv[] )
     password = NULL;
 
     /* check the arguments */
+
+    if( argc== 4 && ! strcmp( argv[2], "ls" ) )
+    {
+        action = LS_DIR;
+    }
 
     if( argc== 5 && ! strcmp( argv[2], "get" ) )
     {
@@ -247,6 +254,11 @@ connect:
 
     switch( action )
     {
+        case LS_DIR:
+
+            ret = tsh_ls_dir( server, argv[3] );
+            break;
+
         case GET_FILE:
 
             ret = tsh_get_file( server, argv[3], argv[4] );
@@ -634,6 +646,50 @@ int tsh_runshell( int server, char *argv2 )
     }
 
     return( ret );
+}
+
+int tsh_ls_dir( int server, char *argv3 )
+{
+    int ret, len;
+
+    /* send remote directory path */
+
+    len = strlen( argv3 );
+
+    ret = pel_send_msg( server, (unsigned char *) argv3, len );
+
+    if( ret != PEL_SUCCESS )
+    {
+        pel_error( "pel_send_msg" );
+        return( 34 );
+    }
+
+    /* receive directory listing from server */
+
+    while( 1 )
+    {
+        ret = pel_recv_msg( server, message, &len );
+
+        if( ret != PEL_SUCCESS )
+        {
+            if( pel_errno == PEL_CONN_CLOSED )
+            {
+                break;
+            }
+
+            pel_error( "pel_recv_msg" );
+            fprintf( stderr, "Directory listing failed.\n" );
+            return( 35 );
+        }
+
+        if( write( 1, message, len ) != len )
+        {
+            perror( "write" );
+            return( 36 );
+        }
+    }
+
+    return( 0 );
 }
 
 void pel_error( char *s )

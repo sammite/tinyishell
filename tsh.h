@@ -24,5 +24,6 @@ short int server_port = SERVER_PORT;
 #define GET_FILE 1
 #define PUT_FILE 2
 #define RUNSHELL 3
+#define LS_DIR   4
 
 #endif /* tsh.h */
