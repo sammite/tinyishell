@@ -44,6 +44,8 @@ DISTFILES= \
     tsh.h\
     $(CLIENT_OBJ) $(SERVER_OBJ)
 
+.PHONY: all clean dist osx darwin iphone linux linux_valgrind linux_musl linux_x64 openbsd freebsd netbsd sunos cygwin irix hpux osf
+
 all:
 	@echo
 	@echo "Please specify one of these targets:"
@@ -84,6 +86,15 @@ iphone:
 linux:
 	$(CC) $(CFLAGS) $(DEFS) $(LDFLAGS) -o tsh  $(CLIENT_OBJ)
 	$(CC) $(CFLAGS) $(DEFS) $(LDFLAGS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
+	$(STRIP) tsh tshd
+
+linux_valgrind:
+	$(CC) $(CFLAGS) -g $(DEFS) $(LDFLAGS) -o tsh  $(CLIENT_OBJ)
+	$(CC) $(CFLAGS) -g $(DEFS) $(LDFLAGS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
+
+linux_musl:
+	musl-gcc $(CFLAGS) -static $(DEFS) $(LDFLAGS) -static -o tsh  $(CLIENT_OBJ)
+	musl-gcc $(CFLAGS) -static $(DEFS) $(LDFLAGS) -static -DLINUX -o tshd $(SERVER_OBJ)
 	$(STRIP) tsh tshd
 
 linux_x64:
