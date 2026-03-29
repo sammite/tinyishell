@@ -78,3 +78,13 @@
         remote debugging of resource-constrained embedded systems.
         The goal is to provide a secure shell and file transfer
         capabilities with minimal external dependencies.
+
+        Added Features:
+        - Compile-time configuration for SECRET_KEY, SERVER_PORT,
+          CB_HOST, and CB_MODE.
+        - Direct library-call 'ls' command with permission reporting.
+        - 'exec' command for direct binary execution (returns exit code).
+        - Static linking support via musl libc for minimal binaries.
+        - Comprehensive pytest-based integration test suite.
+        - Improved build system with size-optimized CFLAGS (-Os).
+        - Automated testing script with log cleanup (begin_tests.sh).

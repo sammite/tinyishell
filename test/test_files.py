@@ -25,11 +25,13 @@ def test_put_get_integrity(tshd_daemon, tmp_path):
     # 2. Put the file to the remote server
     put_res = subprocess.run([config["tsh_path"], "-s", config["secret"], "localhost", "put", str(local_file), remote_path],
                              capture_output=True, text=True)
+    print(f"\n[DEBUG] put stdout:\n{put_res.stdout}")
     assert put_res.returncode == 0
     
     # 3. Get the file back
     get_res = subprocess.run([config["tsh_path"], "-s", config["secret"], "localhost", "get", remote_file, str(tmp_path)],
                              capture_output=True, text=True)
+    print(f"\n[DEBUG] get stdout:\n{get_res.stdout}")
     assert get_res.returncode == 0
     
     # Check integrity
@@ -52,14 +54,16 @@ def test_large_file_integrity(tshd_daemon, tmp_path, size_kb):
     original_hash = get_file_hash(local_file)
     
     # 2. Put to remote
-    subprocess.run([config["tsh_path"], "-s", config["secret"], "localhost", "put", str(local_file), remote_path],
-                   check=True, capture_output=True)
+    put_res = subprocess.run([config["tsh_path"], "-s", config["secret"], "localhost", "put", str(local_file), remote_path],
+                             check=True, capture_output=True, text=True)
+    print(f"\n[DEBUG] large put ({size_kb}kb) stdout:\n{put_res.stdout}")
     
     # 3. Get back to a new local path
     download_dir = tmp_path / "downloaded"
     download_dir.mkdir()
-    subprocess.run([config["tsh_path"], "-s", config["secret"], "localhost", "get", remote_file, str(download_dir)],
-                   check=True, capture_output=True)
+    get_res = subprocess.run([config["tsh_path"], "-s", config["secret"], "localhost", "get", remote_file, str(download_dir)],
+                             check=True, capture_output=True, text=True)
+    print(f"\n[DEBUG] large get ({size_kb}kb) stdout:\n{get_res.stdout}")
     
     downloaded_file = download_dir / f"large_test_{size_kb}kb"
     downloaded_hash = get_file_hash(downloaded_file)

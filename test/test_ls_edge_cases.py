@@ -21,6 +21,7 @@ def test_ls_recursive_and_weird_names(tshd_daemon):
         # 2. Test LS at base
         res = subprocess.run([config["tsh_path"], "-s", config["secret"], "localhost", "ls", base_dir],
                              capture_output=True, text=True)
+        print(f"\n[DEBUG] ls base_dir stdout:\n{res.stdout}")
         assert res.returncode == 0
         assert weird_name in res.stdout
         
@@ -28,6 +29,7 @@ def test_ls_recursive_and_weird_names(tshd_daemon):
         target = os.path.join(base_dir, weird_name)
         res = subprocess.run([config["tsh_path"], "-s", config["secret"], "localhost", "ls", target],
                              capture_output=True, text=True)
+        print(f"\n[DEBUG] ls weird_name stdout:\n{res.stdout}")
         assert res.returncode == 0
         assert long_name in res.stdout
         
@@ -35,6 +37,7 @@ def test_ls_recursive_and_weird_names(tshd_daemon):
         target = os.path.join(base_dir, weird_name, long_name)
         res = subprocess.run([config["tsh_path"], "-s", config["secret"], "localhost", "ls", target],
                              capture_output=True, text=True)
+        print(f"\n[DEBUG] ls long_name stdout:\n{res.stdout}")
         assert res.returncode == 0
         assert "depth" in res.stdout
 

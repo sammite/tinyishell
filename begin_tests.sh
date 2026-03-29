@@ -1,10 +1,22 @@
 #!/bin/bash
 source tshvenv/bin/activate
 
-echo "--- Running Standard Linux Tests ---"
-pytest -sv 2>&1 | tee tmp_log_$(date +%Y%m%d_%H%M%S).log
+SAVE_OUTPUT=false
+if [[ "$1" == "--save-output" ]]; then
+    SAVE_OUTPUT=true
+fi
 
-echo -e "\n--- Running musl Static Tests ---"
-pytest -sv --musl 2>&1 | tee tmp_musl_log_$(date +%Y%m%d_%H%M%S).log
+timestamp=$(date +%Y%m%d_%H%M%S)
+logfile="tmp_musl_log_${timestamp}.log"
+
+echo "--- Running musl Static Tests ---"
+pytest -sv --musl 2>&1 | tee "$logfile"
+ret=${PIPESTATUS[0]}
+
+if [ "$SAVE_OUTPUT" = false ] && [ $ret -eq 0 ]; then
+    echo "Tests passed, removing $logfile"
+    rm "$logfile"
+fi
 
 deactivate
+exit $ret

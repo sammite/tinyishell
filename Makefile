@@ -30,6 +30,11 @@ DEFS		+= -DCB_MODE
 $(info [DEBUG] Building with CB_MODE enabled)
 endif
 
+ifdef DEBUG
+DEFS		+= -DDEBUG
+$(info [DEBUG] Building with DEBUG enabled)
+endif
+
 VERSION=tsh-0.7
 CLIENT_OBJ=pel.c aes.c sha1.c  tsh.c
 SERVER_OBJ=pel.c aes.c sha1.c tshd.c
