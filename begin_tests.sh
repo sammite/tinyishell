@@ -18,7 +18,7 @@ done
 # 1. Add latency to loopback interface if requested
 if [ "$LATENCY" = true ]; then
     echo "--- Adding 3s latency to lo (requires sudo) ---"
-    sudo tc qdisc add dev lo root netem delay 3000ms
+    sudo tc qdisc add dev lo root netem delay 2000ms
 
     # Setup trap to ensure latency is removed even if script exits unexpectedly
     function cleanup {

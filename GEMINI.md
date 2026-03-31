@@ -8,6 +8,7 @@ This project repurposes `tsh` as a lightweight, secure remote shell and file tra
 -   **Direct Library Calls:** Implement operations like `ls`, `getfile`, and `putfile` as direct library calls within `tshd` to minimize reliance on external system commands.
 -   **Minimal Dependencies:** Keep the codebase small and portable to various embedded targets.
 -   **Quality of Life:** Simplify the build process via `Makefile` enhancements for easier cross-compilation.
+-   **No "Glazing":** Maintain a practical, grounded tone. Avoid overstating the complexity or significance of changes; keep documentation and communication direct and realistic.
 
 ## Development Workflow
 
