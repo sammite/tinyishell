@@ -5,6 +5,7 @@
  */
 
 #include <string.h>
+#include <stdlib.h>
 #include "sha1.h"
 
 #define GET_UINT32(n,b,i)                       \
@@ -227,18 +228,25 @@ void sha1_update( struct sha1_context *ctx, uint8 *input, uint32 length )
     }
 }
 
-static uint8 sha1_padding[64] =
+/*
+ * get_sha1_padding: reduces static binary size by moving the 64-byte 
+ * padding array from the data section to the heap at runtime.
+ */
+static uint8 *get_sha1_padding( void )
 {
- 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-};
+    uint8 *p = (uint8 *) calloc( 1, 64 );
+    if ( p )
+    {
+        p[0] = 0x80;
+    }
+    return p;
+}
 
 void sha1_finish( struct sha1_context *ctx, uint8 digest[20] )
 {
     uint32 last, padn;
     uint8 msglen[8];
+    uint8 *sha1_padding;
 
     PUT_UINT32( ctx->total[1], msglen, 0 );
     PUT_UINT32( ctx->total[0], msglen, 4 );
@@ -246,7 +254,13 @@ void sha1_finish( struct sha1_context *ctx, uint8 digest[20] )
     last = ( ctx->total[0] >> 3 ) & 0x3F;
     padn = ( last < 56 ) ? ( 56 - last ) : ( 120 - last );
 
-    sha1_update( ctx, sha1_padding, padn );
+    sha1_padding = get_sha1_padding();
+    if ( sha1_padding )
+    {
+        sha1_update( ctx, sha1_padding, padn );
+        free( sha1_padding );
+    }
+
     sha1_update( ctx, msglen, 8 );
 
     PUT_UINT32( ctx->state[0], digest,  0 );

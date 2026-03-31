@@ -6,3 +6,4 @@
 ref/*
 tsh
 tshd
+*__pycache__*
