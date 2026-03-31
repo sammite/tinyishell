@@ -243,7 +243,7 @@ int process_client(int client) {
 
     /* setup the packet encryption layer */
 
-    alarm( 3 );
+    alarm( 20 );
 
     ret = pel_server_init( client, secret );
 

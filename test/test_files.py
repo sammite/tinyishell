@@ -41,7 +41,7 @@ def test_put_get_integrity(tshd_daemon, tmp_path):
     # 4. Cleanup remote file via exec
     subprocess.run([config["tsh_path"], "-s", config["secret"], "localhost", "exec", f"/bin/rm -f {remote_file}"])
 
-@pytest.mark.parametrize("size_kb", [1, 64, 1024]) # 1KB, 64KB, 1MB
+@pytest.mark.parametrize("size_kb", [1, 16, 64, 128, 256, 512, 1024]) # 1KB to 1MB range
 def test_large_file_integrity(tshd_daemon, tmp_path, size_kb):
     config = tshd_daemon
     local_file = tmp_path / f"large_test_{size_kb}kb"
