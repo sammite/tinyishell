@@ -3,13 +3,15 @@ source tshvenv/bin/activate
 
 LATENCY=false
 SAVE_OUTPUT=false
+PYTEST_ARGS=()
 
 for arg in "$@"; do
     if [[ "$arg" == "--latency" ]]; then
         LATENCY=true
-    fi
-    if [[ "$arg" == "--save-output" ]]; then
+    elif [[ "$arg" == "--save-output" ]]; then
         SAVE_OUTPUT=true
+    else
+        PYTEST_ARGS+=("$arg")
     fi
 done
 
@@ -35,7 +37,7 @@ else
     echo "--- Running musl Static Tests ---"
 fi
 
-pytest -sv --musl 2>&1 | tee "$logfile"
+pytest -sv --musl "${PYTEST_ARGS[@]}" 2>&1 | tee "$logfile"
 ret=${PIPESTATUS[0]}
 
 if [ "$SAVE_OUTPUT" = false ] && [ $ret -eq 0 ]; then

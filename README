@@ -71,20 +71,64 @@
         However, you may choose not to store the real (valid) key in
         the client, which will then ask for a password when it starts.
 
-
+    
     * Repurposing for Embedded Debugging
 
-        Tiny SHell is being repurposed as a lightweight, secure tool for
-        remote debugging of resource-constrained embedded systems.
-        The goal is to provide a secure shell and file transfer
-        capabilities with minimal external dependencies.
+        Tiny SHell is being repurposed as a lightweight, secure "Embedded
+        Debug Shell" (EDS) for resource-constrained systems. By stripping
+        unnecessary dependencies and focusing on core file/shell operations,
+        it provides a robust alternative to traditional heavy debuggers.
 
-        Added Features:
-        - Compile-time configuration for SECRET_KEY, SERVER_PORT,
-          CB_HOST, and CB_MODE.
-        - Direct library-call 'ls' command with permission reporting.
-        - 'exec' command for direct binary execution (returns exit code).
-        - Static linking support via musl libc for minimal binaries.
-        - Comprehensive pytest-based integration test suite.
-        - Improved build system with size-optimized CFLAGS (-Os).
+        | Feature | Description | Embedded Advantage |
+        |---------|-------------|--------------------|
+        | **Direct LS** | Built-in `ls` library call | No dependency on system `ls` |
+        | **Direct Exec** | Executes binary and returns exit code | Minimal shell overhead (worse than normal tiny shell but smaller) |
+        | **Musl Static** | Static linking via musl-gcc | Single-binary, works on any Linux target, only tested x86 so far |
+        | **Size Optimized**| `-Os`, GC sections, LTO flags | Minimal Flash/RAM footprint (TBH so far this doesn't change size that much) |
+        | **Test Suite** | Comprehensive pytest integration | Reliability during porting/refactoring |
+
+        * Space-Saving Compilation Modes
+
+        To further reduce the footprint on target devices, `tshd` is now
+        designed to be compiled in either "Bind" (Listen) mode or "Connect-Back"
+        (CB) mode exclusively. This is controlled via the `CB_MODE` macro in the
+        Makefile (e.g., `make CB_MODE=1`).
+
+        By excluding the code for the unused mode at compile-time, the binary
+        size is significantly reduced, ensuring it fits into the smallest
+        possible boot or recovery partitions.
+
         - Automated testing script with log cleanup (begin_tests.sh).
+
+    * Automated Testing
+
+        The project includes a comprehensive test suite using pytest.
+        The `begin_tests.sh` script handles the build process and environment
+        setup for running tests with musl-static binaries.
+        Most of the ai coding involved in this fork is to build out this test suite. 
+        The actual changes to the code are minimal-
+        the goal was to have significant test coverage that reduces risk of AI code being a problem.
+        - To run all tests (musl-static):
+
+            ./begin_tests.sh
+
+        - To run tests with a 3s latency simulation (requires sudo):
+
+            ./begin_tests.sh --latency
+
+        - To run a specific test file:
+
+            ./begin_tests.sh test/test_commands.py
+
+        - To run a specific test case within a file:
+
+            ./begin_tests.sh test/test_commands.py::test_ls_root_and_home
+
+        - To run tests matching a keyword:
+
+            ./begin_tests.sh -k "integrity"
+
+        All additional arguments passed to `begin_tests.sh` (other than
+        `--latency` and `--save-output`) are forwarded directly to `pytest`.
+
+
