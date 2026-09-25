@@ -245,6 +245,23 @@ class TshRepl(cmd.Cmd):
         print()
         return True
 
+    def do_version(self, _arg):
+        """version: Display client version and cryptographic attribution."""
+        print(
+            "tsh_client (EDS) - GPLv2\n"
+            "Cryptographic engine: Monocypher (c) 2017-2024 Loup Vaillant (2-Clause BSD)"
+        )
+        self.last_exit_code = 0
+
+    def do_license(self, _arg):
+        """license: Display license and third-party cryptographic attribution."""
+        print(
+            "Tiny SHell (EDS) - GPLv2\n"
+            "Cryptographic engine: Monocypher (c) 2017-2024 Loup Vaillant (2-Clause BSD)\n"
+            "See LICENSE.monocypher for full license terms."
+        )
+        self.last_exit_code = 0
+
     def emptyline(self):
         """Do nothing on empty line."""
 
@@ -254,12 +271,19 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="tsh_client - Interactive Python wrapper for Tiny SHell."
     )
-    parser.add_argument("host", help="Remote hostname or 'cb' for connect-back")
+    parser.add_argument(
+        "host", nargs="?", default="localhost", help="Remote hostname or 'cb' for connect-back"
+    )
     parser.add_argument(
         "-s",
         "--secret",
         default=DEFAULT_SECRET,
         help="Secret authentication key (defaults to TSH_SECRET env var or '1234')",
+    )
+    parser.add_argument(
+        "-k",
+        "--key",
+        help="Path to Ed25519 private key seed file",
     )
     parser.add_argument("-p", "--port", type=int, default=DEFAULT_PORT, help="Server port")
     parser.add_argument(
@@ -270,7 +294,19 @@ def parse_args():
     )
     parser.add_argument("--tsh-bin", default=DEFAULT_TSH_BIN, help="Path to tsh binary")
     parser.add_argument("-c", "--command", help="Execute single command string and exit")
-    return parser.parse_args()
+    parser.add_argument(
+        "-v",
+        "--version",
+        action="version",
+        version=(
+            "tsh_client (EDS) - GPLv2\n"
+            "Cryptographic engine: Monocypher (c) 2017-2024 Loup Vaillant (2-Clause BSD)"
+        ),
+    )
+    args = parser.parse_args()
+    if args.key:
+        args.secret = args.key
+    return args
 
 
 def main():

@@ -83,11 +83,21 @@
 
         | Feature | Description | Embedded Advantage |
         |---------|-------------|--------------------|
+        | **Monocypher** | Modern X25519, Ed25519, ChaCha20-Poly1305 | Stronger security, smaller binary, no private key on target |
+        | **Barr-C Standards** | Follows Barr-C:2018 embedded C guidelines | Safety, fixed-width types, predictable behavior |
         | **Direct LS** | Built-in `ls` library call | No dependency on system `ls` |
         | **Direct Exec** | Executes binary and returns exit code | Minimal shell overhead (worse than normal tiny shell but smaller) |
         | **Musl Static** | Static linking via musl-gcc | Single-binary, works on any Linux target, only tested x86 so far |
-        | **Size Optimized**| `-Os`, GC sections, LTO flags | Minimal Flash/RAM footprint (TBH so far this doesn't change size that much) |
+        | **Size Optimized**| `-Os`, GC sections, LTO flags | Minimal Flash/RAM footprint (~74KB stripped musl daemon) |
         | **Test Suite** | Comprehensive pytest integration | Reliability during porting/refactoring |
+
+    * Third-Party Cryptography & Licensing
+
+        This project vendors Monocypher (https://monocypher.org/) for
+        authenticated encryption (X25519, Ed25519, ChaCha20-Poly1305, BLAKE2b).
+        Monocypher is licensed under the 2-Clause BSD License (see LICENSE.monocypher).
+        Client-side tools provide license attribution via `./tsh -v` and `./tsh_client.py --version`.
+
 
         * Space-Saving Compilation Modes
 

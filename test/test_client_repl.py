@@ -203,3 +203,15 @@ def test_repl_local_dirs(tmp_path):
         assert repl.last_exit_code == 0
     finally:
         os.chdir(original_cwd)
+
+
+def test_repl_license_and_version(capsys):
+    repl = TshRepl(host="test_host")
+    repl.do_version("")
+    out = capsys.readouterr().out
+    assert "Monocypher" in out
+    assert "2-Clause BSD" in out
+
+    repl.do_license("")
+    out_lic = capsys.readouterr().out
+    assert "LICENSE.monocypher" in out_lic

@@ -35,7 +35,6 @@ def build_custom_tsh(target, secret, port, cb_mode=False, cb_host=None):
     
     return os.path.abspath(tsh_path), os.path.abspath(tshd_path)
 
-@pytest.mark.skip(reason="Manual investigation of connect-back failure required")
 def test_system_nested_deployment(request, tmp_path):
     """
     Complex scenario:
@@ -92,9 +91,11 @@ def test_system_nested_deployment(request, tmp_path):
         assert os.path.exists(remote_path), f"Remote binary {remote_path} not found"
         
         # 5. Prepare and start Nested Daemon
-        cmd_chmod = [primary_tsh, "-p", str(primary_port), "-s", secret, "127.0.0.1", "exec", f"chmod +x {remote_path}"]
+        chmod_bin = shutil.which("chmod") or "/bin/chmod"
+        cmd_chmod = [primary_tsh, "-p", str(primary_port), "-s", secret, "127.0.0.1", "exec", f"{chmod_bin} +x {remote_path}"]
         res = subprocess.run(cmd_chmod, capture_output=True, text=True)
         assert res.returncode == 0, f"Failed to chmod: {res.stderr}"
+
         
         # Start nested daemon
         cmd_start = [primary_tsh, "-p", str(primary_port), "-s", secret, "127.0.0.1", "exec", remote_path]
