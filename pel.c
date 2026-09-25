@@ -210,7 +210,25 @@ int pel_client_init(int server, char *key)
     send_ctx.seq_num = 0;
     recv_ctx.seq_num = 0;
 
+    /* Receive Server Confirmation (Msg 3): 16 bytes */
+    uint8_t s_confirm[16];
+    uint8_t expected_confirm[16];
+    crypto_blake2b_keyed(expected_confirm, 16, k_shared, 32, (const uint8_t *)"server-ok", 9);
     crypto_wipe(k_shared, sizeof(k_shared));
+
+    ret = pel_recv_all(server, s_confirm, 16, 0);
+    if (ret != PEL_SUCCESS)
+    {
+        pel_errno = PEL_WRONG_CHALLENGE;
+        return PEL_FAILURE;
+    }
+
+    if (crypto_verify16(s_confirm, expected_confirm) != 0)
+    {
+        pel_errno = PEL_WRONG_CHALLENGE;
+        return PEL_FAILURE;
+    }
+
     pel_errno = PEL_UNDEFINED_ERROR;
     return PEL_SUCCESS;
 }
@@ -304,7 +322,17 @@ int pel_server_init(int client, char *key)
     send_ctx.seq_num = 0;
     recv_ctx.seq_num = 0;
 
+    /* Send Server Confirmation (Msg 3): 16 bytes */
+    uint8_t s_confirm[16];
+    crypto_blake2b_keyed(s_confirm, 16, k_shared, 32, (const uint8_t *)"server-ok", 9);
     crypto_wipe(k_shared, sizeof(k_shared));
+
+    ret = pel_send_all(client, s_confirm, 16, 0);
+    if (ret != PEL_SUCCESS)
+    {
+        return PEL_FAILURE;
+    }
+
     pel_errno = PEL_UNDEFINED_ERROR;
     return PEL_SUCCESS;
 }

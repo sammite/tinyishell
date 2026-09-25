@@ -56,6 +56,8 @@ int main( int argc, char *argv[] )
     struct hostent *server_host;
     char action, *password;
 
+    int secret_given = 0;
+
     while ((opt = getopt(argc, argv, "p:s:")) != -1) {
         switch (opt) {
             case 'p':
@@ -64,6 +66,7 @@ int main( int argc, char *argv[] )
                 break;
             case 's':
                 secret=optarg; 
+                secret_given = 1;
                 break;
             default: /* '?' */
                 usage(*argv);
@@ -214,6 +217,12 @@ connect:
         if( ret != PEL_SUCCESS )
         {
             close( server );
+
+            if( secret_given || !isatty( STDIN_FILENO ) )
+            {
+                fprintf( stderr, "Authentication failed.\n" );
+                return( 10 );
+            }
 
             /* secret key invalid, so ask for a password */
 
