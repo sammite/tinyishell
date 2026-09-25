@@ -1,12 +1,12 @@
 CC		= gcc
 RM		= rm -f
 STRIP		= strip
-CFLAGS		= -Os -Wall -Wextra -ffunction-sections -fdata-sections -flto
-LDFLAGS		+= -Wl,--gc-sections -flto
+CFLAGS		= -Os -Wall -Wextra -ffunction-sections -fdata-sections -fno-asynchronous-unwind-tables -fno-unwind-tables -flto
+LDFLAGS		+= -Wl,--gc-sections -Wl,--build-id=none -flto
 
 TOOLCHAIN	= /var/toolchain/sys30
 
-COMM		= pel.o aes.o sha1.o
+COMM		= pel.o monocypher.o monocypher-ed25519.o
 TSH		= tsh
 TSHD		= tshd
 
@@ -36,16 +36,16 @@ $(info [DEBUG] Building with DEBUG enabled)
 endif
 
 VERSION=tsh-0.7
-CLIENT_OBJ=pel.c aes.c sha1.c  tsh.c
-SERVER_OBJ=pel.c aes.c sha1.c tshd.c
+CLIENT_OBJ=pel.c monocypher.c monocypher-ed25519.c  tsh.c
+SERVER_OBJ=pel.c monocypher.c monocypher-ed25519.c tshd.c
 
 DISTFILES= \
-    sha1.h \
+    monocypher.h \
+    monocypher-ed25519.h \
     README \
     ChangeLog\
     pel.h \
     Makefile \
-    aes.h\
     tsh.h\
     $(CLIENT_OBJ) $(SERVER_OBJ)
 
@@ -162,9 +162,9 @@ $(TSHD): $(COMM) tshd.o
 	$(CC) ${LDFLAGS} -o $(TSHD) $(COMM) tshd.o
 	$(STRIP) $(TSHD)
 
-aes.o: aes.h
-pel.o: aes.h pel.h sha1.h
-sha1.o: sha1.h
+monocypher.o: monocypher.h
+monocypher-ed25519.o: monocypher-ed25519.h monocypher.h
+pel.o: monocypher.h monocypher-ed25519.h pel.h
 tsh.o: pel.h tsh.h
 tshd.o: pel.h tsh.h
 

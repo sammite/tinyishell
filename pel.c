@@ -1,457 +1,422 @@
 /*
- * Packet Encryption Layer for Tiny SHell,
- * by Christophe Devine <devine@cr0.net>;
- * this program is licensed under the GPL.
+ * Packet Encryption Layer (PEL) for Tiny SHell
+ * Migrated to Monocypher (X25519, Ed25519, ChaCha20-Poly1305, BLAKE2b)
+ * Adheres to Barr-C:2018 coding standards.
  */
 
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/time.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <string.h>
+#include <stdint.h>
 
 #include "pel.h"
-#include "aes.h"
-#include "sha1.h"
+#include "monocypher.h"
+#include "monocypher-ed25519.h"
 
-/* global data */
-
-int pel_errno;
+int pel_errno = PEL_UNDEFINED_ERROR;
 
 struct pel_context
 {
-    /* AES-CBC-128 variables */
-
-    struct aes_context SK;      /* Rijndael session key  */
-    unsigned char LCT[16];      /* last ciphertext block */
-
-    /* HMAC-SHA1 variables */
-
-    unsigned char k_ipad[64];   /* inner padding  */
-    unsigned char k_opad[64];   /* outer padding  */
-    unsigned long int p_cntr;   /* packet counter */
+    uint8_t key[32];
+    uint8_t nonce_base[16];
+    uint64_t seq_num;
 };
 
-struct pel_context send_ctx;    /* to encrypt outgoing data */
-struct pel_context recv_ctx;    /* to decrypt incoming data */
+static struct pel_context send_ctx;
+static struct pel_context recv_ctx;
 
-unsigned char challenge[16] =   /* version-specific */
+static uint8_t buffer[BUFSIZE + 18];
 
-    "\x58\x90\xAE\x86\xF1\xB9\x1C\xF6" \
-    "\x29\x83\x95\x71\x1D\xDE\x58\x0D";
+/* Internal function prototypes */
+static int pel_get_random(uint8_t *buf, size_t len);
+static int pel_send_all(int s, const void *buf, size_t len, int flags);
+static int pel_recv_all(int s, void *buf, size_t len, int flags);
 
-unsigned char buffer[BUFSIZE + 16 + 20];
-
-/* function declaration */
-
-void pel_setup_context( struct pel_context *pel_ctx,
-                        char *key, unsigned char IV[20] );
-
-int pel_send_all( int s, void *buf, size_t len, int flags );
-int pel_recv_all( int s, void *buf, size_t len, int flags );
-
-/* session setup - client side */
-
-int pel_client_init( int server, char *key )
+/*
+ * Securely fill buffer with cryptographically secure random bytes.
+ */
+static int pel_get_random(uint8_t *buf, size_t len)
 {
-    int ret, len, pid;
-    struct timeval tv;
-    struct sha1_context sha1_ctx;
-    unsigned char IV1[20], IV2[20];
-
-    /* generate both initialization vectors */
-
-    pid = getpid();
-
-    if( gettimeofday( &tv, NULL ) < 0 )
+#if defined(SYS_getrandom)
+    ssize_t ret = syscall(SYS_getrandom, buf, len, 0);
+    if (ret == (ssize_t)len)
     {
-        pel_errno = PEL_SYSTEM_ERROR;
-
-        return( PEL_FAILURE );
+        return 0;
     }
+#endif
 
-    sha1_starts( &sha1_ctx );
-    sha1_update( &sha1_ctx, (uint8 *) &tv,  sizeof( tv  ) );
-    sha1_update( &sha1_ctx, (uint8 *) &pid, sizeof( pid ) );
-    sha1_finish( &sha1_ctx, &buffer[ 0] );
-
-    memcpy( IV1, &buffer[ 0], 20 );
-
-    pid++;
-
-    if( gettimeofday( &tv, NULL ) < 0 )
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd >= 0)
     {
-        pel_errno = PEL_SYSTEM_ERROR;
-
-        return( PEL_FAILURE );
-    }
-
-    sha1_starts( &sha1_ctx );
-    sha1_update( &sha1_ctx, (uint8 *) &tv,  sizeof( tv  ) );
-    sha1_update( &sha1_ctx, (uint8 *) &pid, sizeof( pid ) );
-    sha1_finish( &sha1_ctx, &buffer[20] );
-
-    memcpy( IV2, &buffer[20], 20 );
-
-    /* and pass them to the server */
-
-    ret = pel_send_all( server, buffer, 40, 0 );
-
-    if( ret != PEL_SUCCESS ) return( PEL_FAILURE );
-
-    /* setup the session keys */
-
-    pel_setup_context( &send_ctx, key, IV1 );
-    pel_setup_context( &recv_ctx, key, IV2 );
-
-    /* handshake - encrypt and send the client's challenge */
-
-    ret = pel_send_msg( server, challenge, 16 );
-
-    if( ret != PEL_SUCCESS ) return( PEL_FAILURE );
-
-    /* handshake - decrypt and verify the server's challenge */
-
-    ret = pel_recv_msg( server, buffer, &len );
-
-    if( ret != PEL_SUCCESS ) return( PEL_FAILURE );
-
-    if( len != 16 || memcmp( buffer, challenge, 16 ) != 0 )
-    {
-        pel_errno = PEL_WRONG_CHALLENGE;
-
-        return( PEL_FAILURE );
-    }
-
-    pel_errno = PEL_UNDEFINED_ERROR;
-
-    return( PEL_SUCCESS );
-} 
-
-/* session setup - server side */
-
-int pel_server_init( int client, char *key )
-{
-    int ret, len;
-    unsigned char IV1[20], IV2[20];
-
-    /* get the IVs from the client */
-
-    ret = pel_recv_all( client, buffer, 40, 0 );
-
-    if( ret != PEL_SUCCESS ) return( PEL_FAILURE );
-
-    memcpy( IV2, &buffer[ 0], 20 );
-    memcpy( IV1, &buffer[20], 20 );
-
-    /* setup the session keys */
-
-    pel_setup_context( &send_ctx, key, IV1 );
-    pel_setup_context( &recv_ctx, key, IV2 );
-
-    /* handshake - decrypt and verify the client's challenge */
-
-    ret = pel_recv_msg( client, buffer, &len );
-
-    if( ret != PEL_SUCCESS ) return( PEL_FAILURE );
-
-    if( len != 16 || memcmp( buffer, challenge, 16 ) != 0 )
-    {
-        pel_errno = PEL_WRONG_CHALLENGE;
-
-        return( PEL_FAILURE );
-    }
-
-    /* handshake - encrypt and send the server's challenge */
-
-    ret = pel_send_msg( client, challenge, 16 );
-
-    if( ret != PEL_SUCCESS ) return( PEL_FAILURE );
-
-    pel_errno = PEL_UNDEFINED_ERROR;
-
-    return( PEL_SUCCESS );
-}
-
-/* this routine computes the AES & HMAC session keys */
-
-void pel_setup_context( struct pel_context *pel_ctx,
-                        char *key, unsigned char IV[20] )
-{
-    int i;
-    struct sha1_context sha1_ctx;
-
-    sha1_starts( &sha1_ctx );
-    sha1_update( &sha1_ctx, (uint8 *) key, strlen( key ) );
-    sha1_update( &sha1_ctx, IV, 20 );
-    sha1_finish( &sha1_ctx, buffer );
-
-    aes_set_key( &pel_ctx->SK, buffer, 128 );
-
-    memcpy( pel_ctx->LCT, IV, 16 );
-
-    memset( pel_ctx->k_ipad, 0x36, 64 );
-    memset( pel_ctx->k_opad, 0x5C, 64 );
-
-    for( i = 0; i < 20; i++ )
-    {
-        pel_ctx->k_ipad[i] ^= buffer[i];
-        pel_ctx->k_opad[i] ^= buffer[i];
-    }
-
-    pel_ctx->p_cntr = 0;
-}
-
-/* encrypt and transmit a message */
-
-int pel_send_msg( int sockfd, unsigned char *msg, int length )
-{
-    unsigned char digest[20];
-    struct sha1_context sha1_ctx;
-    int i, j, ret, blk_len;
-
-    /* verify the message length */
-
-    if( length <= 0 || length > BUFSIZE )
-    {
-        pel_errno = PEL_BAD_MSG_LENGTH;
-
-        return( PEL_FAILURE );
-    }
-
-    /* write the message length at start of buffer */
-
-    buffer[0] = ( length >> 8 ) & 0xFF;
-    buffer[1] = ( length      ) & 0xFF;
-
-    /* append the message content */
-
-    memcpy( buffer + 2, msg, length );
-
-    /* round up to AES block length (16 bytes) */
-
-    blk_len = 2 + length;
-
-    if( ( blk_len & 0x0F ) != 0 )
-    {
-        blk_len += 16 - ( blk_len & 0x0F );
-    }
-
-    /* encrypt the buffer with AES-CBC-128 */
-
-    for( i = 0; i < blk_len; i += 16 )
-    {
-        for( j = 0; j < 16; j++ )
+        size_t total = 0;
+        while (total < len)
         {
-            buffer[i + j] ^= send_ctx.LCT[j];
+            ssize_t n = read(fd, buf + total, len - total);
+            if (n <= 0)
+            {
+                close(fd);
+                return -1;
+            }
+            total += (size_t)n;
         }
-
-        aes_encrypt( &send_ctx.SK, &buffer[i] );
-
-        memcpy( send_ctx.LCT, &buffer[i], 16 );
+        close(fd);
+        return 0;
     }
 
-    /* compute the HMAC-SHA1 of the ciphertext */
-
-    buffer[blk_len    ] = ( send_ctx.p_cntr >> 24 ) & 0xFF;
-    buffer[blk_len + 1] = ( send_ctx.p_cntr >> 16 ) & 0xFF;
-    buffer[blk_len + 2] = ( send_ctx.p_cntr >>  8 ) & 0xFF;
-    buffer[blk_len + 3] = ( send_ctx.p_cntr       ) & 0xFF;
-
-    sha1_starts( &sha1_ctx );
-    sha1_update( &sha1_ctx, send_ctx.k_ipad, 64 );
-    sha1_update( &sha1_ctx, buffer, blk_len + 4 );
-    sha1_finish( &sha1_ctx, digest );
-
-    sha1_starts( &sha1_ctx );
-    sha1_update( &sha1_ctx, send_ctx.k_opad, 64 );
-    sha1_update( &sha1_ctx, digest, 20 );
-    sha1_finish( &sha1_ctx, &buffer[blk_len] );
-
-    /* increment the packet counter */
-
-    send_ctx.p_cntr++;
-
-    /* transmit ciphertext and message authentication code */
-
-    ret = pel_send_all( sockfd, buffer, blk_len + 20, 0 );
-
-    if( ret != PEL_SUCCESS ) return( PEL_FAILURE );
-
-    pel_errno = PEL_UNDEFINED_ERROR;
-
-    return( PEL_SUCCESS );
+    return -1;
 }
 
-/* receive and decrypt a message */
-
-int pel_recv_msg( int sockfd, unsigned char *msg, int *length )
+/*
+ * Reliable send loop for streaming sockets.
+ */
+static int pel_send_all(int s, const void *buf, size_t len, int flags)
 {
-    unsigned char temp[16];
-    unsigned char hmac[20];
-    unsigned char digest[20];
-    struct sha1_context sha1_ctx;
-    int i, j, ret, blk_len;
-
-    /* receive the first encrypted block */
-
-    ret = pel_recv_all( sockfd, buffer, 16, 0 );
-
-    if( ret != PEL_SUCCESS ) return( PEL_FAILURE );
-
-    /* decrypt this block and extract the message length */
-
-    memcpy( temp, buffer, 16 );
-
-    aes_decrypt( &recv_ctx.SK, buffer );
-
-    for( j = 0; j < 16; j++ )
-    {
-        buffer[j] ^= recv_ctx.LCT[j];
-    }
-
-    *length = ( ((int) buffer[0]) << 8 ) + (int) buffer[1];
-
-    /* restore the ciphertext */
-
-    memcpy( buffer, temp, 16 );
-
-    /* verify the message length */
-
-    if( *length <= 0 || *length > BUFSIZE )
-    {
-        pel_errno = PEL_BAD_MSG_LENGTH;
-
-        return( PEL_FAILURE );
-    }
-
-    /* round up to AES block length (16 bytes) */
-
-    blk_len = 2 + *length;
-
-    if( ( blk_len & 0x0F ) != 0 )
-    {
-        blk_len += 16 - ( blk_len & 0x0F );
-    }
-
-    /* receive the remaining ciphertext and the mac */
-
-    ret = pel_recv_all( sockfd, &buffer[16], blk_len - 16 + 20, 0 );
-
-    if( ret != PEL_SUCCESS ) return( PEL_FAILURE );
-
-    memcpy( hmac, &buffer[blk_len], 20 );
-
-    /* verify the ciphertext integrity */
-
-    buffer[blk_len    ] = ( recv_ctx.p_cntr >> 24 ) & 0xFF;
-    buffer[blk_len + 1] = ( recv_ctx.p_cntr >> 16 ) & 0xFF;
-    buffer[blk_len + 2] = ( recv_ctx.p_cntr >>  8 ) & 0xFF;
-    buffer[blk_len + 3] = ( recv_ctx.p_cntr       ) & 0xFF;
-
-    sha1_starts( &sha1_ctx );
-    sha1_update( &sha1_ctx, recv_ctx.k_ipad, 64 );
-    sha1_update( &sha1_ctx, buffer, blk_len + 4 );
-    sha1_finish( &sha1_ctx, digest );
-
-    sha1_starts( &sha1_ctx );
-    sha1_update( &sha1_ctx, recv_ctx.k_opad, 64 );
-    sha1_update( &sha1_ctx, digest, 20 );
-    sha1_finish( &sha1_ctx, digest );
-
-    if( memcmp( hmac, digest, 20 ) != 0 )
-    {
-        pel_errno = PEL_CORRUPTED_DATA;
-
-        return( PEL_FAILURE );
-    }
-
-    /* increment the packet counter */
-
-    recv_ctx.p_cntr++;
-
-    /* finally, decrypt and copy the message */
-
-    for( i = 0; i < blk_len; i += 16 )
-    {
-        memcpy( temp, &buffer[i], 16 );
-
-        aes_decrypt( &recv_ctx.SK, &buffer[i] );
-
-        for( j = 0; j < 16; j++ )
-        {
-            buffer[i + j] ^= recv_ctx.LCT[j];
-        }
-
-        memcpy( recv_ctx.LCT, temp, 16 );
-    }
-
-    memcpy( msg, &buffer[2], *length );
-
-    pel_errno = PEL_UNDEFINED_ERROR;
-
-    return( PEL_SUCCESS );
-}
-
-/* send/recv wrappers to handle fragmented TCP packets */
-
-int pel_send_all( int s, void *buf, size_t len, int flags )
-{
-    int n;
     size_t sum = 0;
-    char *offset = buf;
+    const uint8_t *offset = (const uint8_t *)buf;
 
-    while( sum < len )
+    while (sum < len)
     {
-        n = send( s, (void *) offset, len - sum, flags );
-
-        if( n < 0 )
+        ssize_t n = send(s, offset, len - sum, flags);
+        if (n < 0)
         {
             pel_errno = PEL_SYSTEM_ERROR;
-
-            return( PEL_FAILURE );
+            return PEL_FAILURE;
         }
 
-        sum += n;
-
+        sum += (size_t)n;
         offset += n;
     }
 
     pel_errno = PEL_UNDEFINED_ERROR;
-
-    return( PEL_SUCCESS );
+    return PEL_SUCCESS;
 }
 
-int pel_recv_all( int s, void *buf, size_t len, int flags )
+/*
+ * Reliable receive loop for streaming sockets.
+ */
+static int pel_recv_all(int s, void *buf, size_t len, int flags)
 {
-    int n;
     size_t sum = 0;
-    char *offset = buf;
+    uint8_t *offset = (uint8_t *)buf;
 
-    while( sum < len )
+    while (sum < len)
     {
-        n = recv( s, (void *) offset, len - sum, flags );
-
-        if( n == 0 )
+        ssize_t n = recv(s, offset, len - sum, flags);
+        if (n == 0)
         {
             pel_errno = PEL_CONN_CLOSED;
-
-            return( PEL_FAILURE );
+            return PEL_FAILURE;
         }
-
-        if( n < 0 )
+        if (n < 0)
         {
             pel_errno = PEL_SYSTEM_ERROR;
-
-            return( PEL_FAILURE );
+            return PEL_FAILURE;
         }
 
-        sum += n;
-
+        sum += (size_t)n;
         offset += n;
     }
-        
-    pel_errno = PEL_UNDEFINED_ERROR;
 
-    return( PEL_SUCCESS );
+    pel_errno = PEL_UNDEFINED_ERROR;
+    return PEL_SUCCESS;
+}
+
+/*
+ * Client-side session handshake:
+ * 1. Recv Msg1 from Server: s_epk (32B) || n_s (16B) = 48B
+ * 2. Generate client ephemeral keypair (c_esk, c_epk)
+ * 3. Sign transcript: s_epk (32B) || c_epk (32B) || n_s (16B) = 80B
+ * 4. Send Msg2 to Server: c_epk (32B) || sig (64B) = 96B
+ * 5. Compute ECDH shared secret & derive directional ChaCha20-Poly1305 keys.
+ */
+int pel_client_init(int server, char *key)
+{
+    uint8_t dev_seed[32];
+    uint8_t dev_sk[64];
+    uint8_t dev_pk[32];
+    uint8_t s_epk[32];
+    uint8_t n_s[16];
+    uint8_t c_esk[32];
+    uint8_t c_epk[32];
+    uint8_t transcript[80];
+    uint8_t sig[64];
+    uint8_t msg1[48];
+    uint8_t msg2[96];
+    uint8_t k_shared[32];
+    int ret;
+
+    if (key == NULL)
+    {
+        pel_errno = PEL_SYSTEM_ERROR;
+        return PEL_FAILURE;
+    }
+
+    /* Derive developer Ed25519 keypair from secret/passphrase */
+    crypto_blake2b(dev_seed, 32, (const uint8_t *)key, strlen(key));
+    crypto_ed25519_key_pair(dev_sk, dev_pk, dev_seed);
+    crypto_wipe(dev_seed, sizeof(dev_seed));
+
+    /* Receive Server Hello: s_epk (32 bytes) || n_s (16 bytes) = 48 bytes */
+    ret = pel_recv_all(server, msg1, 48, 0);
+    if (ret != PEL_SUCCESS)
+    {
+        crypto_wipe(dev_sk, sizeof(dev_sk));
+        return PEL_FAILURE;
+    }
+    memcpy(s_epk, msg1, 32);
+    memcpy(n_s, msg1 + 32, 16);
+
+    /* Generate client ephemeral keypair (c_esk, c_epk) */
+    if (pel_get_random(c_esk, 32) != 0)
+    {
+        crypto_wipe(dev_sk, sizeof(dev_sk));
+        pel_errno = PEL_SYSTEM_ERROR;
+        return PEL_FAILURE;
+    }
+    crypto_x25519_public_key(c_epk, c_esk);
+
+    /* Construct transcript: s_epk (32) || c_epk (32) || n_s (16) */
+    memcpy(transcript, s_epk, 32);
+    memcpy(transcript + 32, c_epk, 32);
+    memcpy(transcript + 64, n_s, 16);
+
+    /* Sign transcript */
+    crypto_ed25519_sign(sig, dev_sk, transcript, sizeof(transcript));
+    crypto_wipe(dev_sk, sizeof(dev_sk));
+
+    /* Send Client Auth: c_epk (32 bytes) || sig (64 bytes) = 96 bytes */
+    memcpy(msg2, c_epk, 32);
+    memcpy(msg2 + 32, sig, 64);
+    ret = pel_send_all(server, msg2, 96, 0);
+    if (ret != PEL_SUCCESS)
+    {
+        crypto_wipe(c_esk, sizeof(c_esk));
+        return PEL_FAILURE;
+    }
+
+    /* Compute ECDH shared secret */
+    crypto_x25519(k_shared, c_esk, s_epk);
+    crypto_wipe(c_esk, sizeof(c_esk));
+
+    /* Derive symmetric keys and nonces for client (c2s = send, s2c = recv) */
+    crypto_blake2b_keyed(send_ctx.key, 32, k_shared, 32, (const uint8_t *)"c2s", 3);
+    crypto_blake2b_keyed(recv_ctx.key, 32, k_shared, 32, (const uint8_t *)"s2c", 3);
+    crypto_blake2b_keyed(send_ctx.nonce_base, 16, k_shared, 32, (const uint8_t *)"nc2s", 4);
+    crypto_blake2b_keyed(recv_ctx.nonce_base, 16, k_shared, 32, (const uint8_t *)"ns2c", 4);
+    send_ctx.seq_num = 0;
+    recv_ctx.seq_num = 0;
+
+    crypto_wipe(k_shared, sizeof(k_shared));
+    pel_errno = PEL_UNDEFINED_ERROR;
+    return PEL_SUCCESS;
+}
+
+/*
+ * Server-side session handshake:
+ * 1. Generate server ephemeral keypair (s_esk, s_epk) and server nonce n_s
+ * 2. Send Msg1 to Client: s_epk (32B) || n_s (16B) = 48B
+ * 3. Recv Msg2 from Client: c_epk (32B) || sig (64B) = 96B
+ * 4. Verify client Ed25519 signature against developer public key
+ * 5. Compute ECDH shared secret & derive directional ChaCha20-Poly1305 keys.
+ */
+int pel_server_init(int client, char *key)
+{
+    uint8_t dev_seed[32];
+    uint8_t dev_sk[64];
+    uint8_t dev_pk[32];
+    uint8_t s_esk[32];
+    uint8_t s_epk[32];
+    uint8_t n_s[16];
+    uint8_t c_epk[32];
+    uint8_t transcript[80];
+    uint8_t sig[64];
+    uint8_t msg1[48];
+    uint8_t msg2[96];
+    uint8_t k_shared[32];
+    int ret;
+
+    if (key == NULL)
+    {
+        pel_errno = PEL_SYSTEM_ERROR;
+        return PEL_FAILURE;
+    }
+
+    /* Derive developer public key from secret/passphrase */
+    crypto_blake2b(dev_seed, 32, (const uint8_t *)key, strlen(key));
+    crypto_ed25519_key_pair(dev_sk, dev_pk, dev_seed);
+    crypto_wipe(dev_seed, sizeof(dev_seed));
+    crypto_wipe(dev_sk, sizeof(dev_sk)); /* Server never keeps private key */
+
+    /* Generate server ephemeral keypair (s_esk, s_epk) and server nonce n_s */
+    if (pel_get_random(s_esk, 32) != 0 || pel_get_random(n_s, 16) != 0)
+    {
+        pel_errno = PEL_SYSTEM_ERROR;
+        return PEL_FAILURE;
+    }
+    crypto_x25519_public_key(s_epk, s_esk);
+
+    /* Send Server Hello: s_epk (32 bytes) || n_s (16 bytes) = 48 bytes */
+    memcpy(msg1, s_epk, 32);
+    memcpy(msg1 + 32, n_s, 16);
+    ret = pel_send_all(client, msg1, 48, 0);
+    if (ret != PEL_SUCCESS)
+    {
+        crypto_wipe(s_esk, sizeof(s_esk));
+        return PEL_FAILURE;
+    }
+
+    /* Receive Client Auth: c_epk (32 bytes) || sig (64 bytes) = 96 bytes */
+    ret = pel_recv_all(client, msg2, 96, 0);
+    if (ret != PEL_SUCCESS)
+    {
+        crypto_wipe(s_esk, sizeof(s_esk));
+        return PEL_FAILURE;
+    }
+    memcpy(c_epk, msg2, 32);
+    memcpy(sig, msg2 + 32, 64);
+
+    /* Construct transcript: s_epk (32) || c_epk (32) || n_s (16) */
+    memcpy(transcript, s_epk, 32);
+    memcpy(transcript + 32, c_epk, 32);
+    memcpy(transcript + 64, n_s, 16);
+
+    /* Verify signature against developer public key */
+    if (crypto_ed25519_check(sig, dev_pk, transcript, sizeof(transcript)) != 0)
+    {
+        crypto_wipe(s_esk, sizeof(s_esk));
+        pel_errno = PEL_WRONG_CHALLENGE;
+        return PEL_FAILURE;
+    }
+
+    /* Compute ECDH shared secret */
+    crypto_x25519(k_shared, s_esk, c_epk);
+    crypto_wipe(s_esk, sizeof(s_esk));
+
+    /* Derive symmetric keys and nonces for server (s2c = send, c2s = recv) */
+    crypto_blake2b_keyed(send_ctx.key, 32, k_shared, 32, (const uint8_t *)"s2c", 3);
+    crypto_blake2b_keyed(recv_ctx.key, 32, k_shared, 32, (const uint8_t *)"c2s", 3);
+    crypto_blake2b_keyed(send_ctx.nonce_base, 16, k_shared, 32, (const uint8_t *)"ns2c", 4);
+    crypto_blake2b_keyed(recv_ctx.nonce_base, 16, k_shared, 32, (const uint8_t *)"nc2s", 4);
+    send_ctx.seq_num = 0;
+    recv_ctx.seq_num = 0;
+
+    crypto_wipe(k_shared, sizeof(k_shared));
+    pel_errno = PEL_UNDEFINED_ERROR;
+    return PEL_SUCCESS;
+}
+
+/*
+ * Send an authenticated and encrypted message using ChaCha20-Poly1305 AEAD.
+ * Wire format:
+ * [0..1]   = length (big-endian 16-bit)
+ * [2..17]  = Poly1305 MAC tag (16 bytes)
+ * [18..]   = ChaCha20 ciphertext (length bytes)
+ */
+int pel_send_msg(int sockfd, unsigned char *msg, int length)
+{
+    uint8_t nonce[24];
+    uint8_t ad[10];
+    int ret;
+    int i;
+
+    if (length < 0 || length > BUFSIZE)
+    {
+        pel_errno = PEL_BAD_MSG_LENGTH;
+        return PEL_FAILURE;
+    }
+
+    buffer[0] = (uint8_t)((length >> 8) & 0xFF);
+    buffer[1] = (uint8_t)(length & 0xFF);
+
+    /* Construct 24-byte nonce: 16 bytes base || 8 bytes seq_num (big-endian) */
+    memcpy(nonce, send_ctx.nonce_base, 16);
+    for (i = 0; i < 8; i++)
+    {
+        nonce[16 + i] = (uint8_t)((send_ctx.seq_num >> (56 - (8 * i))) & 0xFF);
+    }
+
+    /* Associated Data: 2 bytes length || 8 bytes seq_num */
+    ad[0] = buffer[0];
+    ad[1] = buffer[1];
+    memcpy(ad + 2, nonce + 16, 8);
+
+    /* Encrypt payload and compute MAC */
+    crypto_aead_lock(&buffer[18], &buffer[2], send_ctx.key, nonce,
+                     ad, sizeof(ad), (const uint8_t *)msg, (size_t)length);
+
+    send_ctx.seq_num++;
+
+    ret = pel_send_all(sockfd, buffer, (size_t)(length + 18), 0);
+    if (ret != PEL_SUCCESS)
+    {
+        return PEL_FAILURE;
+    }
+
+    pel_errno = PEL_UNDEFINED_ERROR;
+    return PEL_SUCCESS;
+}
+
+/*
+ * Receive and decrypt an authenticated message using ChaCha20-Poly1305 AEAD.
+ */
+int pel_recv_msg(int sockfd, unsigned char *msg, int *length)
+{
+    uint8_t nonce[24];
+    uint8_t ad[10];
+    int payload_len;
+    int ret;
+    int i;
+
+    /* Read 2 bytes for payload length */
+    ret = pel_recv_all(sockfd, buffer, 2, 0);
+    if (ret != PEL_SUCCESS)
+    {
+        return PEL_FAILURE;
+    }
+
+    payload_len = ((int)buffer[0] << 8) | (int)buffer[1];
+    if (payload_len < 0 || payload_len > BUFSIZE)
+    {
+        pel_errno = PEL_BAD_MSG_LENGTH;
+        return PEL_FAILURE;
+    }
+
+    /* Read MAC tag (16 bytes) and ciphertext (payload_len bytes) */
+    if (payload_len + 16 > 0)
+    {
+        ret = pel_recv_all(sockfd, &buffer[2], (size_t)(payload_len + 16), 0);
+        if (ret != PEL_SUCCESS)
+        {
+            return PEL_FAILURE;
+        }
+    }
+
+    /* Construct 24-byte nonce: 16 bytes base || 8 bytes seq_num (big-endian) */
+    memcpy(nonce, recv_ctx.nonce_base, 16);
+    for (i = 0; i < 8; i++)
+    {
+        nonce[16 + i] = (uint8_t)((recv_ctx.seq_num >> (56 - (8 * i))) & 0xFF);
+    }
+
+    /* Associated Data: 2 bytes length || 8 bytes seq_num */
+    ad[0] = buffer[0];
+    ad[1] = buffer[1];
+    memcpy(ad + 2, nonce + 16, 8);
+
+    /* Decrypt ciphertext and verify MAC */
+    if (crypto_aead_unlock((uint8_t *)msg, &buffer[2], recv_ctx.key, nonce,
+                           ad, sizeof(ad), &buffer[18], (size_t)payload_len) != 0)
+    {
+        pel_errno = PEL_CORRUPTED_DATA;
+        return PEL_FAILURE;
+    }
+
+    recv_ctx.seq_num++;
+    *length = payload_len;
+    pel_errno = PEL_UNDEFINED_ERROR;
+    return PEL_SUCCESS;
 }

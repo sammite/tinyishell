@@ -1,6 +1,9 @@
 #ifndef _PEL_H
 #define _PEL_H
 
+#include <stdint.h>
+#include <stddef.h>
+
 #define BUFSIZE 4096    /* maximum message length */
 
 #define PEL_SUCCESS 1
@@ -21,4 +24,4 @@ int pel_server_init( int client, char *key );
 int pel_send_msg( int sockfd, unsigned char *msg, int  length );
 int pel_recv_msg( int sockfd, unsigned char *msg, int *length );
 
-#endif /* pel.h */
+#endif /* _PEL_H */
