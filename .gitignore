@@ -7,3 +7,5 @@ ref/*
 tsh
 tshd
 *__pycache__*
+tshvenv/
+*.log

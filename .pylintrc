@@ -1,0 +1,57 @@
+# Pylint configuration based on Google Python Style Guide
+# https://google.github.io/styleguide/pyguide.html
+
+[MAIN]
+ignore=tshvenv,.git,__pycache__
+persistent=no
+jobs=4
+unsafe-load-any-extension=no
+
+[MESSAGES CONTROL]
+confidence=
+
+# Google styleguide disable baseline adapted for modern pylint
+disable=
+    abstract-method,
+    arguments-differ,
+    attribute-defined-outside-init,
+    c-extension-no-member,
+    consider-using-enumerate,
+    duplicate-code,
+    fixme,
+    global-statement,
+    import-error,
+    import-outside-toplevel,
+    invalid-name,
+    locally-disabled,
+    missing-function-docstring,
+    no-member,
+    no-name-in-module,
+    signature-differs,
+
+    suppressed-message,
+    too-few-public-methods,
+    too-many-arguments,
+    too-many-branches,
+    too-many-instance-attributes,
+    too-many-lines,
+    too-many-locals,
+    too-many-positional-arguments,
+    too-many-public-methods,
+    too-many-return-statements,
+    too-many-statements,
+    unused-argument,
+    useless-else-on-loop,
+    useless-suppression
+
+[REPORTS]
+output-format=text
+reports=no
+score=yes
+
+[FORMAT]
+max-line-length=100
+indent-string='    '
+
+[BASIC]
+good-names=i,j,k,ex,Run,_,fp,fd,st,ts

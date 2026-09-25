@@ -32,21 +32,23 @@
 
         Make sure tshd is running on the remote host. You can:
 
-        - start a shell:
+        - start an interactive shell session (with remote directory tracking):
 
-            ./tsh <hostname>
+            ./tsh_client.py [ -s secret ] [ -p port ] <hostname|cb>
 
-        - execute a command:
+        - execute a single remote command or query:
 
-            ./tsh <hostname> "uname -a"
+            ./tsh [ -s secret ] [ -p port ] <hostname|cb> exec <remote-command>
+            ./tsh [ -s secret ] [ -p port ] <hostname|cb> ls <remote-dir>
 
         - transfer files:
 
-            ./tsh <hostname> get /etc/shadow .
-            ./tsh <hostname> put vmlinuz /boot
+            ./tsh [ -s secret ] [ -p port ] <hostname|cb> get <source-file> <dest-dir>
+            ./tsh [ -s secret ] [ -p port ] <hostname|cb> put <source-file> <dest-dir>
 
         Note: if the server runs in connect-back mode, replace
         the remote machine hostname with "cb".
+
 
     * About multiple file transfers
 
