@@ -1,0 +1,6 @@
+# CodeChecker Skipfile
+# Skip third-party vendored cryptographic library sources
+-*monocypher.c
+-*monocypher.h
+-*monocypher-ed25519.c
+-*monocypher-ed25519.h

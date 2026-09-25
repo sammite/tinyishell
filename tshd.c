@@ -389,6 +389,7 @@ int tshd_get_file( int client )
 
         if( len < 0 )
         {
+            close( fd );
             return( 16 );
         }
 
@@ -396,10 +397,12 @@ int tshd_get_file( int client )
 
         if( ret != PEL_SUCCESS )
         {
+            close( fd );
             return( 17 );
         }
     }
 
+    close( fd );
     return( 18 );
 }
 
@@ -440,15 +443,18 @@ int tshd_put_file( int client )
                 break;
             }
 
+            close( fd );
             return( 21 );
         }
 
         if( write( fd, message, len ) != len )
         {
+            close( fd );
             return( 22 );
         }
     }
 
+    close( fd );
     return( 23 );
 }
 

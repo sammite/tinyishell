@@ -165,7 +165,8 @@ static void test_pel_tampered_ciphertext(void)
         packet[1] = 0x0A;
         memset(packet + 2, 0xAA, 16); /* Bogus tag */
         memset(packet + 18, 0x55, 10); /* Bogus ciphertext */
-        write(sv[1], packet, sizeof(packet));
+        ssize_t w = write(sv[1], packet, sizeof(packet));
+        assert(w == (ssize_t)sizeof(packet));
 
         close(sv[1]);
         _exit(0);
@@ -225,7 +226,8 @@ static void test_pel_tampered_tag(void)
         raw_frame[1] = 0x05;
         memset(raw_frame + 2, 0xFF, 16);
         memcpy(raw_frame + 18, "hello", 5);
-        write(sv[1], raw_frame, sizeof(raw_frame));
+        ssize_t w = write(sv[1], raw_frame, sizeof(raw_frame));
+        assert(w == (ssize_t)sizeof(raw_frame));
 
         close(sv[1]);
         _exit(0);
@@ -277,7 +279,8 @@ static void test_pel_oversized_packet(void)
         /* Send header declaring 5000 bytes (> BUFSIZE 4096) */
         oversized_header[0] = (uint8_t)(5000 >> 8);
         oversized_header[1] = (uint8_t)(5000 & 0xFF);
-        write(sv[1], oversized_header, 2);
+        ssize_t w = write(sv[1], oversized_header, 2);
+        assert(w == 2);
 
         close(sv[1]);
         _exit(0);

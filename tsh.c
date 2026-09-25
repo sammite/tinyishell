@@ -335,13 +335,13 @@ int tsh_get_file( int server, char *argv3, char *argv4 )
 
     fd = creat( pathname, 0644 );
 
+    free( pathname );
+
     if( fd < 0 )
     {
         perror( "creat" );
         return( 14 );
     }
-
-    free( pathname );
 
     /* transfer from server */
 
@@ -360,12 +360,14 @@ int tsh_get_file( int server, char *argv3, char *argv4 )
 
             pel_error( "pel_recv_msg" );
             fprintf( stderr, "Transfer failed.\n" );
+            close( fd );
             return( 15 );
         }
 
         if( write( fd, message, len ) != len )
         {
             perror( "write" );
+            close( fd );
             return( 16 );
         }
 
@@ -374,6 +376,8 @@ int tsh_get_file( int server, char *argv3, char *argv4 )
         printf( "%d\r", total );
         fflush( stdout );
     }
+
+    close( fd );
 
     printf( "%d done.\n", total );
 
@@ -410,13 +414,13 @@ int tsh_put_file( int server, char *argv3, char *argv4 )
 
     ret = pel_send_msg( server, (unsigned char *) pathname, len );
 
+    free( pathname );
+
     if( ret != PEL_SUCCESS )
     {
         pel_error( "pel_send_msg" );
         return( 18 );
     }
-
-    free( pathname );
 
     /* open local file */
 
@@ -439,6 +443,7 @@ int tsh_put_file( int server, char *argv3, char *argv4 )
         if( len < 0 )
         {
             perror( "read" );
+            close( fd );
             return( 20 );
         }
 
@@ -453,6 +458,7 @@ int tsh_put_file( int server, char *argv3, char *argv4 )
         {
             pel_error( "pel_send_msg" );
             fprintf( stderr, "Transfer failed.\n" );
+            close( fd );
             return( 21 );
         }
 
@@ -461,6 +467,8 @@ int tsh_put_file( int server, char *argv3, char *argv4 )
         printf( "%d\r", total );
         fflush( stdout );
     }
+
+    close( fd );
 
     printf( "%d done.\n", total );
 

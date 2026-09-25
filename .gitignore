@@ -9,3 +9,6 @@ tshd
 *__pycache__*
 tshvenv/
 *.log
+compile_commands.json
+codechecker_reports/
+test/test_pel_unit

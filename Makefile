@@ -49,7 +49,9 @@ DISTFILES= \
     tsh.h\
     $(CLIENT_OBJ) $(SERVER_OBJ)
 
-.PHONY: all clean dist osx darwin iphone linux linux_valgrind linux_musl linux_x64 openbsd freebsd netbsd sunos cygwin irix hpux osf
+VALGRIND_FLAGS	= --leak-check=full --show-leak-kinds=all --track-origins=yes --error-exitcode=1 --errors-for-leak-kinds=all
+
+.PHONY: all clean dist osx darwin iphone linux linux_valgrind linux_asan linux_musl linux_x64 openbsd freebsd netbsd sunos cygwin irix hpux osf analyze valgrind asan
 
 all:
 	@echo
@@ -67,6 +69,9 @@ all:
 	@echo "	make osf"
 	@echo "	make iphone"
 	@echo "	make darwin"
+	@echo "	make analyze"
+	@echo "	make valgrind"
+	@echo "	make asan"
 	@echo
 	make `uname | tr A-Z a-z`
 
@@ -94,8 +99,50 @@ linux:
 	$(STRIP) tsh tshd
 
 linux_valgrind:
-	$(CC) $(CFLAGS) -g $(DEFS) $(LDFLAGS) -o tsh  $(CLIENT_OBJ)
-	$(CC) $(CFLAGS) -g $(DEFS) $(LDFLAGS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
+	$(CC) -O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -o tsh  $(CLIENT_OBJ)
+	$(CC) -O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
+
+linux_asan:
+	$(CC) -fsanitize=address -g -O1 -fno-omit-frame-pointer $(DEFS) -o tsh  $(CLIENT_OBJ)
+	$(CC) -fsanitize=address -g -O1 -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
+
+analyze:
+	@echo "--- Running GCC static analyzer (-fanalyzer) ---"
+	$(CC) -I. -fanalyzer -Wall -Wextra -c pel.c tsh.c tshd.c
+	@rm -f *.o
+	@if [ -d "tshvenv" ]; then \
+		echo "--- Running CodeChecker static analysis ---"; \
+		bash -c "source tshvenv/bin/activate && \
+			rm -rf codechecker_reports compile_commands.json && \
+			CodeChecker log -b '$(MAKE) clean && $(MAKE) linux' -o compile_commands.json && \
+			CodeChecker analyze compile_commands.json -i .codechecker_skip -o ./codechecker_reports && \
+			CodeChecker parse ./codechecker_reports"; \
+	fi
+
+valgrind:
+	@echo "--- Building dynamic glibc binaries with debug symbols ---"
+	$(CC) -O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -o tsh $(CLIENT_OBJ)
+	$(CC) -O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
+	$(CC) -O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer -I. test/test_pel_unit.c pel.c monocypher.c monocypher-ed25519.c -o test/test_pel_unit
+	@echo "--- Running Valgrind on PEL cryptographic unit tests ---"
+	valgrind $(VALGRIND_FLAGS) ./test/test_pel_unit
+	@if [ -d "tshvenv" ]; then \
+		echo "--- Running Valgrind pytest transaction tests ---"; \
+		bash -c "source tshvenv/bin/activate && pytest -sv test/test_valgrind.py"; \
+	fi
+
+asan:
+	@echo "--- Building AddressSanitizer binaries ---"
+	$(CC) -fsanitize=address -g -O1 -fno-omit-frame-pointer $(DEFS) -o tsh $(CLIENT_OBJ)
+	$(CC) -fsanitize=address -g -O1 -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
+	$(CC) -fsanitize=address -g -O1 -fno-omit-frame-pointer -I. test/test_pel_unit.c pel.c monocypher.c monocypher-ed25519.c -o test/test_pel_unit_asan
+	@echo "--- Running AddressSanitizer on PEL cryptographic unit tests ---"
+	ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1" ./test/test_pel_unit_asan
+	@rm -f test/test_pel_unit_asan
+	@if [ -d "tshvenv" ]; then \
+		echo "--- Running AddressSanitizer pytest transaction tests ---"; \
+		bash -c "source tshvenv/bin/activate && pytest -sv test/test_asan.py"; \
+	fi
 
 linux_musl:
 	musl-gcc $(CFLAGS) -static $(DEFS) $(LDFLAGS) -static -o tsh  $(CLIENT_OBJ)
@@ -172,7 +219,8 @@ tshd.o: pel.h tsh.h
 	$(CC) ${CFLAGS} ${DEFS} -c $*.c
 
 clean:
-	$(RM) $(TSH) $(TSHD) *.o core
+	$(RM) $(TSH) $(TSHD) test/test_pel_unit *.o test/*.o core compile_commands.json
+	rm -rf codechecker_reports
 
 
 dist:
