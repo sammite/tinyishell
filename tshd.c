@@ -493,7 +493,7 @@ int tshd_ls_dir( int client )
     struct stat st;
     char path[BUFSIZE];
     char line[BUFSIZE + 256];
-    char getdents_buf[1024];
+    char getdents_buf[1024] __attribute__( ( aligned( 8 ) ) );
     int nread;
 
     /* get the directory path */

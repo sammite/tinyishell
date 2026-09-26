@@ -1,0 +1,19 @@
+# Dockerfile.cross
+# Hermetic multi-architecture build & test environment for tinyishell
+FROM alpine:latest
+
+RUN apk update && apk add --no-cache \
+    bash \
+    curl \
+    tar \
+    make \
+    gcc \
+    musl-dev \
+    qemu-arm \
+    qemu-aarch64 \
+    qemu-mips \
+    qemu-mipsel
+
+WORKDIR /work
+
+CMD ["make", "cross_all"]

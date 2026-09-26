@@ -12,3 +12,6 @@ tshvenv/
 compile_commands.json
 codechecker_reports/
 test/test_pel_unit
+.toolchains/
+dist/
+build/
