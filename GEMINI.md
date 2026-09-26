@@ -9,6 +9,7 @@ This project repurposes `tsh` as a lightweight, secure remote shell and file tra
 -   **Minimal Dependencies:** Keep the codebase small and portable to various embedded targets.
 -   **Quality of Life:** Simplify the build process via `Makefile` enhancements for easier cross-compilation.
 -   **No "Glazing":** Maintain a practical, grounded tone. Avoid overstating the complexity or significance of changes; keep documentation and communication direct and realistic.
+-   **Git Boundaries:** The assistant writes code, runs tests, and inspects repository state (`git status`, `git log`, `git diff`). The user reviews, commits, and pushes changes.
 
 ## Development Workflow
 
