@@ -16,12 +16,12 @@
 #define PEL_CORRUPTED_DATA      -5
 #define PEL_UNDEFINED_ERROR     -6
 
-extern int pel_errno;
+extern int32_t pel_errno;
 
-int pel_client_init( int server, char *key );
-int pel_server_init( int client, char *key );
+int pel_client_init( int server, const char *key );
+int pel_server_init( int client, const char *key );
 
-int pel_send_msg( int sockfd, unsigned char *msg, int  length );
+int pel_send_msg( int sockfd, const unsigned char *msg, int  length );
 int pel_recv_msg( int sockfd, unsigned char *msg, int *length );
 
 #endif /* _PEL_H */

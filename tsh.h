@@ -1,6 +1,8 @@
 #ifndef _TSH_H
 #define _TSH_H
 
+#include <stdint.h>
+
 #ifndef SECRET_KEY
 #define SECRET_KEY "1234"
 #endif
@@ -13,10 +15,9 @@
 #define SERVER_PORT 1234
 #endif
 
-char *secret = SECRET_KEY;
-char *cb_host = CB_HOST;
-
-short int server_port = SERVER_PORT;
+extern char *secret;
+extern char *cb_host;
+extern int server_port;
 
 #define CONNECT_BACK_HOST  "localhost"
 #define CONNECT_BACK_DELAY 5
@@ -26,4 +27,4 @@ short int server_port = SERVER_PORT;
 #define LS_DIR   4
 #define EXEC_BIN 5
 
-#endif /* tsh.h */
+#endif /* _TSH_H */

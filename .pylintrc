@@ -20,15 +20,12 @@ disable=
     duplicate-code,
     fixme,
     global-statement,
-    import-error,
     import-outside-toplevel,
     invalid-name,
     locally-disabled,
     missing-function-docstring,
     no-member,
-    no-name-in-module,
     signature-differs,
-
     suppressed-message,
     too-few-public-methods,
     too-many-arguments,
@@ -40,9 +37,7 @@ disable=
     too-many-public-methods,
     too-many-return-statements,
     too-many-statements,
-    unused-argument,
-    useless-else-on-loop,
-    useless-suppression
+    useless-else-on-loop
 
 [REPORTS]
 output-format=text

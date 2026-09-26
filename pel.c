@@ -17,7 +17,7 @@
 #include "monocypher.h"
 #include "monocypher-ed25519.h"
 
-int pel_errno = PEL_UNDEFINED_ERROR;
+int32_t pel_errno = PEL_UNDEFINED_ERROR;
 
 struct pel_context
 {
@@ -133,7 +133,7 @@ static int pel_recv_all(int s, void *buf, size_t len, int flags)
  * 4. Send Msg2 to Server: c_epk (32B) || sig (64B) = 96B
  * 5. Compute ECDH shared secret & derive directional ChaCha20-Poly1305 keys.
  */
-int pel_client_init(int server, char *key)
+int pel_client_init(int server, const char *key)
 {
     uint8_t dev_seed[32];
     uint8_t dev_sk[64];
@@ -203,17 +203,22 @@ int pel_client_init(int server, char *key)
     crypto_wipe(c_esk, sizeof(c_esk));
 
     /* Derive symmetric keys and nonces for client (c2s = send, s2c = recv) */
-    crypto_blake2b_keyed(send_ctx.key, 32, k_shared, 32, (const uint8_t *)"c2s", 3);
-    crypto_blake2b_keyed(recv_ctx.key, 32, k_shared, 32, (const uint8_t *)"s2c", 3);
-    crypto_blake2b_keyed(send_ctx.nonce_base, 16, k_shared, 32, (const uint8_t *)"nc2s", 4);
-    crypto_blake2b_keyed(recv_ctx.nonce_base, 16, k_shared, 32, (const uint8_t *)"ns2c", 4);
+    crypto_blake2b_keyed(send_ctx.key, 32, k_shared, 32,
+                         (const uint8_t *)"c2s", 3);
+    crypto_blake2b_keyed(recv_ctx.key, 32, k_shared, 32,
+                         (const uint8_t *)"s2c", 3);
+    crypto_blake2b_keyed(send_ctx.nonce_base, 16, k_shared, 32,
+                         (const uint8_t *)"nc2s", 4);
+    crypto_blake2b_keyed(recv_ctx.nonce_base, 16, k_shared, 32,
+                         (const uint8_t *)"ns2c", 4);
     send_ctx.seq_num = 0;
     recv_ctx.seq_num = 0;
 
     /* Receive Server Confirmation (Msg 3): 16 bytes */
     uint8_t s_confirm[16];
     uint8_t expected_confirm[16];
-    crypto_blake2b_keyed(expected_confirm, 16, k_shared, 32, (const uint8_t *)"server-ok", 9);
+    crypto_blake2b_keyed(expected_confirm, 16, k_shared, 32,
+                         (const uint8_t *)"server-ok", 9);
     crypto_wipe(k_shared, sizeof(k_shared));
 
     ret = pel_recv_all(server, s_confirm, 16, 0);
@@ -241,7 +246,7 @@ int pel_client_init(int server, char *key)
  * 4. Verify client Ed25519 signature against developer public key
  * 5. Compute ECDH shared secret & derive directional ChaCha20-Poly1305 keys.
  */
-int pel_server_init(int client, char *key)
+int pel_server_init(int client, const char *key)
 {
     uint8_t dev_seed[32];
     uint8_t dev_sk[64];
@@ -315,16 +320,21 @@ int pel_server_init(int client, char *key)
     crypto_wipe(s_esk, sizeof(s_esk));
 
     /* Derive symmetric keys and nonces for server (s2c = send, c2s = recv) */
-    crypto_blake2b_keyed(send_ctx.key, 32, k_shared, 32, (const uint8_t *)"s2c", 3);
-    crypto_blake2b_keyed(recv_ctx.key, 32, k_shared, 32, (const uint8_t *)"c2s", 3);
-    crypto_blake2b_keyed(send_ctx.nonce_base, 16, k_shared, 32, (const uint8_t *)"ns2c", 4);
-    crypto_blake2b_keyed(recv_ctx.nonce_base, 16, k_shared, 32, (const uint8_t *)"nc2s", 4);
+    crypto_blake2b_keyed(send_ctx.key, 32, k_shared, 32,
+                         (const uint8_t *)"s2c", 3);
+    crypto_blake2b_keyed(recv_ctx.key, 32, k_shared, 32,
+                         (const uint8_t *)"c2s", 3);
+    crypto_blake2b_keyed(send_ctx.nonce_base, 16, k_shared, 32,
+                         (const uint8_t *)"ns2c", 4);
+    crypto_blake2b_keyed(recv_ctx.nonce_base, 16, k_shared, 32,
+                         (const uint8_t *)"nc2s", 4);
     send_ctx.seq_num = 0;
     recv_ctx.seq_num = 0;
 
     /* Send Server Confirmation (Msg 3): 16 bytes */
     uint8_t s_confirm[16];
-    crypto_blake2b_keyed(s_confirm, 16, k_shared, 32, (const uint8_t *)"server-ok", 9);
+    crypto_blake2b_keyed(s_confirm, 16, k_shared, 32,
+                         (const uint8_t *)"server-ok", 9);
     crypto_wipe(k_shared, sizeof(k_shared));
 
     ret = pel_send_all(client, s_confirm, 16, 0);
@@ -344,7 +354,7 @@ int pel_server_init(int client, char *key)
  * [2..17]  = Poly1305 MAC tag (16 bytes)
  * [18..]   = ChaCha20 ciphertext (length bytes)
  */
-int pel_send_msg(int sockfd, unsigned char *msg, int length)
+int pel_send_msg(int sockfd, const unsigned char *msg, int length)
 {
     uint8_t nonce[24];
     uint8_t ad[10];
@@ -437,7 +447,8 @@ int pel_recv_msg(int sockfd, unsigned char *msg, int *length)
 
     /* Decrypt ciphertext and verify MAC */
     if (crypto_aead_unlock((uint8_t *)msg, &buffer[2], recv_ctx.key, nonce,
-                           ad, sizeof(ad), &buffer[18], (size_t)payload_len) != 0)
+                           ad, sizeof(ad), &buffer[18],
+                           (size_t)payload_len) != 0)
     {
         pel_errno = PEL_CORRUPTED_DATA;
         return PEL_FAILURE;

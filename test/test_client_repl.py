@@ -1,19 +1,19 @@
-"""test_client_repl.py - Tests for the tsh_client Python REPL wrapper."""
+"""Tests for the tsh_client Python REPL wrapper."""
 
 import os
 import subprocess
-import sys
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from tsh_client import TshRepl, safe_shlex_split  # pylint: disable=wrong-import-position
+from tsh_client import TshRepl, safe_shlex_split
 
 
 def test_safe_shlex_split():
+    """Verify safe quote-aware argument splitting and unclosed quote detection."""
     assert safe_shlex_split('foo "bar baz"') == ["foo", "bar baz"]
     assert safe_shlex_split('unclosed "quote') is None
 
 
 def test_repl_path_resolution():
+    """Verify relative and absolute path resolution logic in the REPL."""
     repl = TshRepl(host="test_host", initial_dir="/")
     assert repl.remote_cwd == "/"
     assert repl.prompt == "tsh [test_host:/]$ "
@@ -36,6 +36,7 @@ def test_repl_path_resolution():
 
 
 def test_repl_cd_and_pwd(tshd_daemon):
+    """Verify remote directory navigation (cd and pwd) in the REPL."""
     config = tshd_daemon
     repl = TshRepl(
         host="localhost",
@@ -73,6 +74,7 @@ def test_repl_cd_and_pwd(tshd_daemon):
 
 
 def test_repl_ls_and_file_ops(tshd_daemon, tmp_path, capsys):
+    """Verify remote ls, put, get, and cleanup operations inside REPL session."""
     config = tshd_daemon
     repl = TshRepl(
         host="localhost",
@@ -113,6 +115,7 @@ def test_repl_ls_and_file_ops(tshd_daemon, tmp_path, capsys):
 
 
 def test_repl_onecmd_flag(tshd_daemon):
+    """Verify single command mode execution (-c) and exit code propagation."""
     config = tshd_daemon
     # Success case
     res = subprocess.run(
@@ -163,6 +166,7 @@ def test_repl_onecmd_flag(tshd_daemon):
 
 
 def test_repl_piped_interactive_session(tshd_daemon):
+    """Verify multi-command non-interactive execution via stdin pipeline."""
     config = tshd_daemon
     input_cmds = "pwd\ncd /var/tmp\npwd\ncd ..\npwd\nexit\n"
     res = subprocess.run(
@@ -191,6 +195,7 @@ def test_repl_piped_interactive_session(tshd_daemon):
 
 
 def test_repl_local_dirs(tmp_path):
+    """Verify local working directory tracking (lcd and lls)."""
     repl = TshRepl(host="test_host", initial_dir="/")
     original_cwd = os.getcwd()
     try:
@@ -206,6 +211,7 @@ def test_repl_local_dirs(tmp_path):
 
 
 def test_repl_license_and_version(capsys):
+    """Verify license and version output commands in the REPL."""
     repl = TshRepl(host="test_host")
     repl.do_version("")
     out = capsys.readouterr().out

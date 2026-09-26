@@ -49,9 +49,9 @@ DISTFILES= \
     tsh.h\
     $(CLIENT_OBJ) $(SERVER_OBJ)
 
-VALGRIND_FLAGS	= --leak-check=full --show-leak-kinds=all --track-origins=yes --error-exitcode=1 --errors-for-leak-kinds=all
+VALGRIND_FLAGS	= --leak-check=full --show-leak-kinds=all --track-origins=yes --error-exitcode=1 --errors-for-leak-kinds=all --trace-children=yes
 
-.PHONY: all clean dist osx darwin iphone linux linux_valgrind linux_asan linux_musl linux_x64 openbsd freebsd netbsd sunos cygwin irix hpux osf analyze valgrind asan
+.PHONY: all clean dist osx darwin iphone linux linux_valgrind linux_asan linux_musl linux_x64 openbsd freebsd netbsd sunos cygwin irix hpux osf analyze valgrind asan ubsan
 
 all:
 	@echo
@@ -72,6 +72,7 @@ all:
 	@echo "	make analyze"
 	@echo "	make valgrind"
 	@echo "	make asan"
+	@echo "	make ubsan"
 	@echo
 	make `uname | tr A-Z a-z`
 
@@ -103,8 +104,8 @@ linux_valgrind:
 	$(CC) -O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
 
 linux_asan:
-	$(CC) -fsanitize=address -g -O1 -fno-omit-frame-pointer $(DEFS) -o tsh  $(CLIENT_OBJ)
-	$(CC) -fsanitize=address -g -O1 -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
+	$(CC) -fsanitize=address -g -O1 -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -o tsh  $(CLIENT_OBJ)
+	$(CC) -fsanitize=address -g -O1 -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
 
 analyze:
 	@echo "--- Running GCC static analyzer (-fanalyzer) ---"
@@ -133,15 +134,29 @@ valgrind:
 
 asan:
 	@echo "--- Building AddressSanitizer binaries ---"
-	$(CC) -fsanitize=address -g -O1 -fno-omit-frame-pointer $(DEFS) -o tsh $(CLIENT_OBJ)
-	$(CC) -fsanitize=address -g -O1 -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
-	$(CC) -fsanitize=address -g -O1 -fno-omit-frame-pointer -I. test/test_pel_unit.c pel.c monocypher.c monocypher-ed25519.c -o test/test_pel_unit_asan
+	$(CC) -fsanitize=address -g -O1 -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -o tsh $(CLIENT_OBJ)
+	$(CC) -fsanitize=address -g -O1 -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
+	$(CC) -fsanitize=address -g -O1 -Wall -Wextra -fno-omit-frame-pointer -I. test/test_pel_unit.c pel.c monocypher.c monocypher-ed25519.c -o test/test_pel_unit_asan
 	@echo "--- Running AddressSanitizer on PEL cryptographic unit tests ---"
 	ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1" ./test/test_pel_unit_asan
 	@rm -f test/test_pel_unit_asan
 	@if [ -d "tshvenv" ]; then \
 		echo "--- Running AddressSanitizer pytest transaction tests ---"; \
 		bash -c "source tshvenv/bin/activate && pytest -sv test/test_asan.py"; \
+	fi
+
+ubsan:
+	@echo "--- Building UndefinedBehaviorSanitizer binaries ---"
+	$(CC) -O2 -c monocypher.c monocypher-ed25519.c
+	$(CC) -fsanitize=undefined -g -O1 -Wall -Wextra $(DEFS) -o tsh pel.c tsh.c monocypher.o monocypher-ed25519.o
+	$(CC) -fsanitize=undefined -g -O1 -Wall -Wextra $(DEFS) -DLINUX -o tshd pel.c tshd.c monocypher.o monocypher-ed25519.o -lutil
+	$(CC) -fsanitize=undefined -g -O1 -Wall -Wextra -I. test/test_pel_unit.c pel.c monocypher.o monocypher-ed25519.o -o test/test_pel_unit_ubsan
+	@echo "--- Running UndefinedBehaviorSanitizer on PEL cryptographic unit tests ---"
+	UBSAN_OPTIONS="halt_on_error=1:abort_on_error=1:print_stacktrace=1" ./test/test_pel_unit_ubsan
+	@rm -f test/test_pel_unit_ubsan monocypher.o monocypher-ed25519.o
+	@if [ -d "tshvenv" ]; then \
+		echo "--- Running UndefinedBehaviorSanitizer pytest transaction tests ---"; \
+		bash -c "source tshvenv/bin/activate && pytest -sv test/test_ubsan.py"; \
 	fi
 
 linux_musl:
