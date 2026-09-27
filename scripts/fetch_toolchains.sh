@@ -14,10 +14,16 @@ declare -A TOOLCHAINS=(
     ["aarch64"]="aarch64-linux-musl-cross"
     ["mips"]="mips-linux-musl-cross"
     ["mipsel"]="mipsel-linux-musl-cross"
+    ["riscv64"]="riscv64-linux-musl-cross"
+    ["riscv32"]="riscv32-linux-musl-cross"
+    ["powerpc"]="powerpc-linux-musl-cross"
+    ["ppc"]="powerpc-linux-musl-cross"
+    ["mips64"]="mips64-linux-musl-cross"
+    ["mips64el"]="mips64el-linux-musl-cross"
 )
 
 usage() {
-    echo "Usage: $0 [arm|arm64|aarch64|mips|mipsel|all]"
+    echo "Usage: $0 [arm|arm64|mips|mipsel|riscv64|riscv32|powerpc|mips64|mips64el|all]"
     exit 1
 }
 
@@ -44,7 +50,7 @@ fi
 TARGET="$1"
 
 if [ "$TARGET" = "all" ]; then
-    for t in arm arm64 mips mipsel; do
+    for t in arm arm64 mips mipsel riscv64 riscv32 powerpc mips64 mips64el; do
         fetch_target "$t"
     done
 else

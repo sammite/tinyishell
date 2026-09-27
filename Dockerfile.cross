@@ -12,7 +12,12 @@ RUN apk update && apk add --no-cache \
     qemu-arm \
     qemu-aarch64 \
     qemu-mips \
-    qemu-mipsel
+    qemu-mipsel \
+    qemu-riscv64 \
+    qemu-riscv32 \
+    qemu-ppc \
+    qemu-mips64 \
+    qemu-mips64el
 
 WORKDIR /work
 

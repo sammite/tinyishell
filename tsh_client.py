@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""tsh_client.py - Interactive Python REPL wrapper for Tiny SHell (tsh).
+"""tsh_client.py - Standalone Python client and interactive REPL for Tiny SHell (tsh).
 
-Tracks remote directory state and provides an interactive shell experience
-without requiring any server-side modifications.
+Provides both a direct CLI alternative to the C tsh binary and an interactive
+shell tracking remote directory state, communicating via native PyNaCl PEL encryption.
 """
+
+from __future__ import annotations
 
 import argparse
 import cmd
@@ -12,6 +14,8 @@ import posixpath
 import shlex
 import subprocess
 import sys
+
+from tsh_pel import TshClient, TshResult
 
 try:
     import readline  # pylint: disable=unused-import
@@ -40,23 +44,38 @@ class TshRepl(cmd.Cmd):
 
     def __init__(
         self,
-        host,
+        host="localhost",
         secret=DEFAULT_SECRET,
         port=DEFAULT_PORT,
         tsh_bin=DEFAULT_TSH_BIN,
         initial_dir=DEFAULT_REMOTE_CWD,
         stdin=None,
         stdout=None,
+        is_key_file=False,
+        secret_given=False,
+        use_c_bin=False,
     ):
         super().__init__(stdin=stdin, stdout=stdout)
         self.host = host
         self.secret = secret
         self.port = port
         self.tsh_bin = tsh_bin
+        self.is_key_file = is_key_file
+        self.secret_given = secret_given
+        self.use_c_bin = use_c_bin
+
         self.remote_cwd = posixpath.normpath(initial_dir) if initial_dir else DEFAULT_REMOTE_CWD
         if not self.remote_cwd.startswith("/"):
             self.remote_cwd = "/" + self.remote_cwd
         self.last_exit_code = 0
+
+        self.client = TshClient(
+            host=self.host,
+            port=self.port,
+            secret=self.secret,
+            is_key_file=self.is_key_file,
+            secret_given=self.secret_given,
+        )
         self.update_prompt()
 
     def update_prompt(self):
@@ -73,18 +92,26 @@ class TshRepl(cmd.Cmd):
             resolved = posixpath.normpath(posixpath.join(self.remote_cwd, path))
         return resolved
 
-    def run_tsh(self, *args, capture_output=True) -> subprocess.CompletedProcess:
-        """Executes a command via the tsh binary."""
-        cmd_args = [
-            self.tsh_bin,
-            "-s",
-            str(self.secret),
-            "-p",
-            str(self.port),
-            self.host,
-            *args,
-        ]
-        return subprocess.run(cmd_args, capture_output=capture_output, text=True, check=False)
+    def run_tsh(self, *args, capture_output=True) -> TshResult | subprocess.CompletedProcess:
+        """Executes a command via native TshClient or optional C tsh binary fallback."""
+        if self.use_c_bin:
+            cmd_args = [
+                self.tsh_bin,
+                "-s",
+                str(self.secret),
+                "-p",
+                str(self.port),
+                self.host,
+                *args,
+            ]
+            return subprocess.run(cmd_args, capture_output=capture_output, text=True, check=False)
+
+        if not args:
+            return TshResult(1, stderr="No command specified\n")
+
+        action = args[0]
+        action_args = args[1:]
+        return self.client.execute(action, *action_args, capture_output=capture_output)
 
     def check_dir_exists(self, remote_dir: str) -> bool:
         """Validates that a remote directory exists by performing an ls query."""
@@ -249,7 +276,8 @@ class TshRepl(cmd.Cmd):
         """version: Display client version and cryptographic attribution."""
         print(
             "tsh_client (EDS) - GPLv2\n"
-            "Cryptographic engine: Monocypher (c) 2017-2024 Loup Vaillant (2-Clause BSD)"
+            "Cryptographic engine: PyNaCl / Monocypher wire-compatible\n"
+            "(c) 2017-2024 Loup Vaillant (2-Clause BSD)"
         )
         self.last_exit_code = 0
 
@@ -257,8 +285,8 @@ class TshRepl(cmd.Cmd):
         """license: Display license and third-party cryptographic attribution."""
         print(
             "Tiny SHell (EDS) - GPLv2\n"
-            "Cryptographic engine: Monocypher (c) 2017-2024 Loup Vaillant (2-Clause BSD)\n"
-            "See LICENSE.monocypher for full license terms."
+            "Cryptographic engine: PyNaCl (Libsodium) / Monocypher wire-compatible\n"
+            "See LICENSE.monocypher for server license terms."
         )
         self.last_exit_code = 0
 
@@ -269,15 +297,28 @@ class TshRepl(cmd.Cmd):
 def parse_args():
     """Parses command-line arguments for tsh_client."""
     parser = argparse.ArgumentParser(
-        description="tsh_client - Interactive Python wrapper for Tiny SHell."
+        description="tsh_client - Standalone Python client and interactive REPL for Tiny SHell."
     )
     parser.add_argument(
-        "host", nargs="?", default="localhost", help="Remote hostname or 'cb' for connect-back"
+        "host",
+        nargs="?",
+        default="localhost",
+        help="Remote hostname or 'cb' for connect-back (default: localhost)",
+    )
+    parser.add_argument(
+        "action",
+        nargs="?",
+        help="Single-shot action (ls, exec, get, put)",
+    )
+    parser.add_argument(
+        "action_args",
+        nargs="*",
+        help="Arguments for single-shot action",
     )
     parser.add_argument(
         "-s",
         "--secret",
-        default=DEFAULT_SECRET,
+        default=None,
         help="Secret authentication key (defaults to TSH_SECRET env var or '1234')",
     )
     parser.add_argument(
@@ -292,32 +333,72 @@ def parse_args():
         default=DEFAULT_REMOTE_CWD,
         help="Initial remote working directory",
     )
-    parser.add_argument("--tsh-bin", default=DEFAULT_TSH_BIN, help="Path to tsh binary")
-    parser.add_argument("-c", "--command", help="Execute single command string and exit")
+    parser.add_argument(
+        "--tsh-bin",
+        default=DEFAULT_TSH_BIN,
+        help="Path to tsh binary (for backward compatibility with --use-c-bin)",
+    )
+    parser.add_argument(
+        "--use-c-bin",
+        action="store_true",
+        help="Force execution through the C tsh binary rather than native Python engine",
+    )
+    parser.add_argument("-c", "--command", help="Execute single REPL command string and exit")
     parser.add_argument(
         "-v",
         "--version",
         action="version",
         version=(
             "tsh_client (EDS) - GPLv2\n"
-            "Cryptographic engine: Monocypher (c) 2017-2024 Loup Vaillant (2-Clause BSD)"
+            "Cryptographic engine: PyNaCl (Libsodium) / Monocypher wire-compatible"
         ),
     )
     args = parser.parse_args()
+
+    # Normalize if user ran 'tsh_client.py ls /' without explicit host
+    if args.host in ("ls", "exec", "get", "put") and not args.command:
+        real_action = args.host
+        real_action_args = ([args.action] if args.action else []) + args.action_args
+        args.host = "localhost"
+        args.action = real_action
+        args.action_args = real_action_args
+
+    args.secret_given = args.secret is not None
+    if args.secret is None:
+        args.secret = DEFAULT_SECRET
     if args.key:
         args.secret = args.key
+        args.secret_given = True
+
     return args
 
 
 def main():
     """Main entry point for tsh_client."""
     args = parse_args()
+
+    # Single-shot CLI mode matching tsh
+    if args.action:
+        client = TshClient(
+            host=args.host,
+            port=args.port,
+            secret=args.secret,
+            is_key_file=bool(args.key),
+            secret_given=args.secret_given,
+        )
+        res = client.execute(args.action, *args.action_args, capture_output=False)
+        sys.exit(res.returncode)
+
+    # REPL mode
     repl = TshRepl(
         host=args.host,
         secret=args.secret,
         port=args.port,
         tsh_bin=args.tsh_bin,
         initial_dir=args.dir,
+        is_key_file=bool(args.key),
+        secret_given=args.secret_given,
+        use_c_bin=args.use_c_bin,
     )
 
     if args.command:

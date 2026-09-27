@@ -10,6 +10,11 @@ ARM_CROSS	?= $(TOOLCHAIN_DIR)/arm-linux-musleabi-cross/bin/arm-linux-musleabi-
 ARM64_CROSS	?= $(TOOLCHAIN_DIR)/aarch64-linux-musl-cross/bin/aarch64-linux-musl-
 MIPS_CROSS	?= $(TOOLCHAIN_DIR)/mips-linux-musl-cross/bin/mips-linux-musl-
 MIPSEL_CROSS	?= $(TOOLCHAIN_DIR)/mipsel-linux-musl-cross/bin/mipsel-linux-musl-
+RISCV64_CROSS	?= $(TOOLCHAIN_DIR)/riscv64-linux-musl-cross/bin/riscv64-linux-musl-
+RISCV32_CROSS	?= $(TOOLCHAIN_DIR)/riscv32-linux-musl-cross/bin/riscv32-linux-musl-
+POWERPC_CROSS	?= $(TOOLCHAIN_DIR)/powerpc-linux-musl-cross/bin/powerpc-linux-musl-
+MIPS64_CROSS	?= $(TOOLCHAIN_DIR)/mips64-linux-musl-cross/bin/mips64-linux-musl-
+MIPS64EL_CROSS	?= $(TOOLCHAIN_DIR)/mips64el-linux-musl-cross/bin/mips64el-linux-musl-
 DIST_DIR	?= dist
 
 COMM		= pel.o monocypher.o monocypher-ed25519.o
@@ -57,7 +62,7 @@ DISTFILES= \
 
 VALGRIND_FLAGS	= --leak-check=full --show-leak-kinds=all --track-origins=yes --error-exitcode=1 --errors-for-leak-kinds=all --trace-children=yes
 
-.PHONY: all clean dist osx darwin iphone linux linux_valgrind linux_asan linux_musl linux_musl_generic linux_arm_musl linux_arm64_musl linux_mips_musl linux_mipsel_musl cross_all test_cross_qemu linux_x64 openbsd freebsd netbsd sunos cygwin irix hpux osf analyze valgrind asan ubsan
+.PHONY: all clean dist osx darwin iphone linux linux_valgrind linux_asan linux_musl linux_musl_generic linux_arm_musl linux_arm64_musl linux_mips_musl linux_mipsel_musl linux_riscv64_musl linux_riscv32_musl linux_powerpc_musl linux_mips64_musl linux_mips64el_musl cross_all test_cross_qemu linux_x64 openbsd freebsd netbsd sunos cygwin irix hpux osf analyze valgrind asan ubsan
 
 all:
 	@echo
@@ -69,6 +74,11 @@ all:
 	@echo "	make linux_arm64_musl"
 	@echo "	make linux_mips_musl"
 	@echo "	make linux_mipsel_musl"
+	@echo "	make linux_riscv64_musl"
+	@echo "	make linux_riscv32_musl"
+	@echo "	make linux_powerpc_musl"
+	@echo "	make linux_mips64_musl"
+	@echo "	make linux_mips64el_musl"
 	@echo "	make cross_all"
 	@echo "	make test_cross_qemu"
 	@echo "	make linux_x64"
@@ -176,6 +186,7 @@ linux_musl:
 	$(MAKE) CC="musl-gcc" STRIP="$(STRIP)" linux_musl_generic
 
 linux_musl_generic:
+	$(RM) $(TSH) $(TSHD)
 	$(CC) $(CFLAGS) -static $(DEFS) $(LDFLAGS) -static -o $(TSH) $(CLIENT_OBJ)
 	$(CC) $(CFLAGS) -static $(DEFS) $(LDFLAGS) -static -DLINUX -o $(TSHD) $(SERVER_OBJ)
 	$(STRIP) $(TSH) $(TSHD)
@@ -224,8 +235,65 @@ linux_mipsel_musl:
 		exit 1; \
 	fi
 
+linux_riscv64_musl:
+	@if [ -x "$(RISCV64_CROSS)gcc" ]; then \
+		$(MAKE) CC="$(RISCV64_CROSS)gcc" STRIP="$(RISCV64_CROSS)strip" linux_musl_generic; \
+	elif command -v riscv64-linux-musl-gcc >/dev/null 2>&1; then \
+		$(MAKE) CC="riscv64-linux-musl-gcc" STRIP="riscv64-linux-musl-strip" linux_musl_generic; \
+	else \
+		echo "[-] RISC-V 64 cross toolchain not found in $(RISCV64_CROSS) or PATH."; \
+		echo "    Run ./scripts/fetch_toolchains.sh riscv64 to download."; \
+		exit 1; \
+	fi
+
+linux_riscv32_musl:
+	@if [ -x "$(RISCV32_CROSS)gcc" ]; then \
+		$(MAKE) CC="$(RISCV32_CROSS)gcc" STRIP="$(RISCV32_CROSS)strip" linux_musl_generic; \
+	elif command -v riscv32-linux-musl-gcc >/dev/null 2>&1; then \
+		$(MAKE) CC="riscv32-linux-musl-gcc" STRIP="riscv32-linux-musl-strip" linux_musl_generic; \
+	else \
+		echo "[-] RISC-V 32 cross toolchain not found in $(RISCV32_CROSS) or PATH."; \
+		echo "    Run ./scripts/fetch_toolchains.sh riscv32 to download."; \
+		exit 1; \
+	fi
+
+linux_powerpc_musl:
+	@if [ -x "$(POWERPC_CROSS)gcc" ]; then \
+		$(MAKE) CC="$(POWERPC_CROSS)gcc" STRIP="$(POWERPC_CROSS)strip" linux_musl_generic; \
+	elif command -v powerpc-linux-musl-gcc >/dev/null 2>&1; then \
+		$(MAKE) CC="powerpc-linux-musl-gcc" STRIP="powerpc-linux-musl-strip" linux_musl_generic; \
+	else \
+		echo "[-] PowerPC cross toolchain not found in $(POWERPC_CROSS) or PATH."; \
+		echo "    Run ./scripts/fetch_toolchains.sh powerpc to download."; \
+		exit 1; \
+	fi
+
+linux_mips64_musl:
+	@if [ -x "$(MIPS64_CROSS)gcc" ]; then \
+		$(MAKE) CC="$(MIPS64_CROSS)gcc" STRIP="$(MIPS64_CROSS)strip" linux_musl_generic; \
+	elif command -v mips64-linux-musl-gcc >/dev/null 2>&1; then \
+		$(MAKE) CC="mips64-linux-musl-gcc" STRIP="mips64-linux-musl-strip" linux_musl_generic; \
+	else \
+		echo "[-] MIPS64 cross toolchain not found in $(MIPS64_CROSS) or PATH."; \
+		echo "    Run ./scripts/fetch_toolchains.sh mips64 to download."; \
+		exit 1; \
+	fi
+
+linux_mips64el_musl:
+	@if [ -x "$(MIPS64EL_CROSS)gcc" ]; then \
+		$(MAKE) CC="$(MIPS64EL_CROSS)gcc" STRIP="$(MIPS64EL_CROSS)strip" linux_musl_generic; \
+	elif command -v mips64el-linux-musl-gcc >/dev/null 2>&1; then \
+		$(MAKE) CC="mips64el-linux-musl-gcc" STRIP="mips64el-linux-musl-strip" linux_musl_generic; \
+	else \
+		echo "[-] MIPS64EL cross toolchain not found in $(MIPS64EL_CROSS) or PATH."; \
+		echo "    Run ./scripts/fetch_toolchains.sh mips64el to download."; \
+		exit 1; \
+	fi
+
 cross_all:
-	@mkdir -p $(DIST_DIR)/arm $(DIST_DIR)/arm64 $(DIST_DIR)/mips $(DIST_DIR)/mipsel
+	@mkdir -p $(DIST_DIR)/arm $(DIST_DIR)/arm64 $(DIST_DIR)/mips $(DIST_DIR)/mipsel \
+		  $(DIST_DIR)/riscv64 $(DIST_DIR)/riscv32 $(DIST_DIR)/powerpc \
+		  $(DIST_DIR)/mips64 $(DIST_DIR)/mips64el
 	@echo "--- Building static musl ARM (arm-linux-musleabi) ---"
 	$(MAKE) linux_arm_musl
 	@cp $(TSH) $(TSHD) $(DIST_DIR)/arm/
@@ -238,6 +306,21 @@ cross_all:
 	@echo "--- Building static musl MIPSEL (mipsel-linux-musl) ---"
 	$(MAKE) linux_mipsel_musl
 	@cp $(TSH) $(TSHD) $(DIST_DIR)/mipsel/
+	@echo "--- Building static musl RISC-V 64 (riscv64-linux-musl) ---"
+	$(MAKE) linux_riscv64_musl
+	@cp $(TSH) $(TSHD) $(DIST_DIR)/riscv64/
+	@echo "--- Building static musl RISC-V 32 (riscv32-linux-musl) ---"
+	$(MAKE) linux_riscv32_musl
+	@cp $(TSH) $(TSHD) $(DIST_DIR)/riscv32/
+	@echo "--- Building static musl PowerPC (powerpc-linux-musl) ---"
+	$(MAKE) linux_powerpc_musl
+	@cp $(TSH) $(TSHD) $(DIST_DIR)/powerpc/
+	@echo "--- Building static musl MIPS64 (mips64-linux-musl) ---"
+	$(MAKE) linux_mips64_musl
+	@cp $(TSH) $(TSHD) $(DIST_DIR)/mips64/
+	@echo "--- Building static musl MIPS64EL (mips64el-linux-musl) ---"
+	$(MAKE) linux_mips64el_musl
+	@cp $(TSH) $(TSHD) $(DIST_DIR)/mips64el/
 	@echo "--- Cross-compilation complete! Binaries in $(DIST_DIR)/ ---"
 	@ls -lh $(DIST_DIR)/*/*
 
