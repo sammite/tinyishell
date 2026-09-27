@@ -26,8 +26,8 @@
 
 #include "tsh.h"
 #include "pel.h"
+#include "tsh_pubkey.h"
 
-char *secret = SECRET_KEY;
 char *cb_host = CB_HOST;
 int server_port = SERVER_PORT;
 
@@ -323,7 +323,7 @@ int process_client( int client )
 
     alarm( 20 );
 
-    ret = pel_server_init( client, secret );
+    ret = pel_server_init( client, default_dev_pk );
 
     if( ret != PEL_SUCCESS )
     {

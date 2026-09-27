@@ -133,9 +133,9 @@ static int pel_recv_all(int s, void *buf, size_t len, int flags)
  * 4. Send Msg2 to Server: c_epk (32B) || sig (64B) = 96B
  * 5. Compute ECDH shared secret & derive directional ChaCha20-Poly1305 keys.
  */
-int pel_client_init(int server, const char *key)
+int pel_client_init(int server, const uint8_t dev_seed[32])
 {
-    uint8_t dev_seed[32];
+    uint8_t seed_buf[32];
     uint8_t dev_sk[64];
     uint8_t dev_pk[32];
     uint8_t s_epk[32];
@@ -149,16 +149,16 @@ int pel_client_init(int server, const char *key)
     uint8_t k_shared[32];
     int ret;
 
-    if (key == NULL)
+    if (dev_seed == NULL)
     {
         pel_errno = PEL_SYSTEM_ERROR;
         return PEL_FAILURE;
     }
 
-    /* Derive developer Ed25519 keypair from secret/passphrase */
-    crypto_blake2b(dev_seed, 32, (const uint8_t *)key, strlen(key));
-    crypto_ed25519_key_pair(dev_sk, dev_pk, dev_seed);
-    crypto_wipe(dev_seed, sizeof(dev_seed));
+    /* Compute developer Ed25519 keypair directly from 32-byte seed */
+    memcpy(seed_buf, dev_seed, 32);
+    crypto_ed25519_key_pair(dev_sk, dev_pk, seed_buf);
+    crypto_wipe(seed_buf, sizeof(seed_buf));
 
     /* Receive Server Hello: s_epk (32 bytes) || n_s (16 bytes) = 48 bytes */
     ret = pel_recv_all(server, msg1, 48, 0);
@@ -246,11 +246,8 @@ int pel_client_init(int server, const char *key)
  * 4. Verify client Ed25519 signature against developer public key
  * 5. Compute ECDH shared secret & derive directional ChaCha20-Poly1305 keys.
  */
-int pel_server_init(int client, const char *key)
+int pel_server_init(int client, const uint8_t dev_pk[32])
 {
-    uint8_t dev_seed[32];
-    uint8_t dev_sk[64];
-    uint8_t dev_pk[32];
     uint8_t s_esk[32];
     uint8_t s_epk[32];
     uint8_t n_s[16];
@@ -262,17 +259,11 @@ int pel_server_init(int client, const char *key)
     uint8_t k_shared[32];
     int ret;
 
-    if (key == NULL)
+    if (dev_pk == NULL)
     {
         pel_errno = PEL_SYSTEM_ERROR;
         return PEL_FAILURE;
     }
-
-    /* Derive developer public key from secret/passphrase */
-    crypto_blake2b(dev_seed, 32, (const uint8_t *)key, strlen(key));
-    crypto_ed25519_key_pair(dev_sk, dev_pk, dev_seed);
-    crypto_wipe(dev_seed, sizeof(dev_seed));
-    crypto_wipe(dev_sk, sizeof(dev_sk)); /* Server never keeps private key */
 
     /* Generate server ephemeral keypair (s_esk, s_epk) and server nonce n_s */
     if (pel_get_random(s_esk, 32) != 0 || pel_get_random(n_s, 16) != 0)

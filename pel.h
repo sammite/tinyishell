@@ -18,8 +18,8 @@
 
 extern int32_t pel_errno;
 
-int pel_client_init( int server, const char *key );
-int pel_server_init( int client, const char *key );
+int pel_client_init( int server, const uint8_t dev_seed[32] );
+int pel_server_init( int client, const uint8_t dev_pk[32] );
 
 int pel_send_msg( int sockfd, const unsigned char *msg, int  length );
 int pel_recv_msg( int sockfd, unsigned char *msg, int *length );

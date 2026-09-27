@@ -27,6 +27,25 @@
         }                                                                      \
     } while (0)
 
+static uint8_t test_seed_1[32];
+static uint8_t test_pk_1[32];
+static uint8_t test_seed_2[32];
+static uint8_t test_pk_2[32];
+
+static void init_test_keys(void)
+{
+    uint8_t sk[64];
+    uint8_t seed_copy[32];
+
+    memset(test_seed_1, 0x11, 32);
+    memcpy(seed_copy, test_seed_1, 32);
+    crypto_ed25519_key_pair(sk, test_pk_1, seed_copy);
+
+    memset(test_seed_2, 0x22, 32);
+    memcpy(seed_copy, test_seed_2, 32);
+    crypto_ed25519_key_pair(sk, test_pk_2, seed_copy);
+}
+
 /* Forward declarations */
 static void test_pel_happy_path(void);
 static void test_pel_mismatched_keys(void);
@@ -57,7 +76,7 @@ static void test_pel_happy_path(void)
 
         close(sv[0]);
 
-        ret = pel_client_init(sv[1], "shared_secret_123");
+        ret = pel_client_init(sv[1], test_seed_1);
         TEST_ASSERT(ret == PEL_SUCCESS);
 
         ret = pel_send_msg(sv[1], (uint8_t *)client_msg,
@@ -83,7 +102,7 @@ static void test_pel_happy_path(void)
 
         close(sv[1]);
 
-        ret = pel_server_init(sv[0], "shared_secret_123");
+        ret = pel_server_init(sv[0], test_pk_1);
         TEST_ASSERT(ret == PEL_SUCCESS);
 
         ret = pel_recv_msg(sv[0], rx_buf, &rx_len);
@@ -120,7 +139,7 @@ static void test_pel_mismatched_keys(void)
         int32_t ret;
         close(sv[0]);
 
-        ret = pel_client_init(sv[1], "wrong_secret");
+        ret = pel_client_init(sv[1], test_seed_2);
         TEST_ASSERT(ret == PEL_FAILURE);
         TEST_ASSERT(pel_errno == PEL_WRONG_CHALLENGE);
 
@@ -134,7 +153,7 @@ static void test_pel_mismatched_keys(void)
         int32_t ret;
         close(sv[1]);
 
-        ret = pel_server_init(sv[0], "correct_secret");
+        ret = pel_server_init(sv[0], test_pk_1);
         TEST_ASSERT(ret == PEL_FAILURE);
         TEST_ASSERT(pel_errno == PEL_WRONG_CHALLENGE);
 
@@ -165,7 +184,7 @@ static void test_pel_tampered_ciphertext(void)
         ssize_t w;
         close(sv[0]);
 
-        ret = pel_client_init(sv[1], "secret_tamper");
+        ret = pel_client_init(sv[1], test_seed_1);
         TEST_ASSERT(ret == PEL_SUCCESS);
 
         /* Send valid packet first */
@@ -193,7 +212,7 @@ static void test_pel_tampered_ciphertext(void)
 
         close(sv[1]);
 
-        ret = pel_server_init(sv[0], "secret_tamper");
+        ret = pel_server_init(sv[0], test_pk_1);
         TEST_ASSERT(ret == PEL_SUCCESS);
 
         /* 1st packet must succeed */
@@ -231,7 +250,7 @@ static void test_pel_tampered_tag(void)
         ssize_t w;
         close(sv[0]);
 
-        ret = pel_client_init(sv[1], "secret_tag");
+        ret = pel_client_init(sv[1], test_seed_1);
         TEST_ASSERT(ret == PEL_SUCCESS);
 
         /* Construct frame declaring 5 bytes with invalid MAC */
@@ -254,7 +273,7 @@ static void test_pel_tampered_tag(void)
 
         close(sv[1]);
 
-        ret = pel_server_init(sv[0], "secret_tag");
+        ret = pel_server_init(sv[0], test_pk_1);
         TEST_ASSERT(ret == PEL_SUCCESS);
 
         ret = pel_recv_msg(sv[0], rx_buf, &rx_len);
@@ -287,7 +306,7 @@ static void test_pel_oversized_packet(void)
         ssize_t w;
         close(sv[0]);
 
-        ret = pel_client_init(sv[1], "secret_size");
+        ret = pel_client_init(sv[1], test_seed_1);
         TEST_ASSERT(ret == PEL_SUCCESS);
 
         /* Send header declaring 5000 bytes (> BUFSIZE 4096) */
@@ -308,7 +327,7 @@ static void test_pel_oversized_packet(void)
 
         close(sv[1]);
 
-        ret = pel_server_init(sv[0], "secret_size");
+        ret = pel_server_init(sv[0], test_pk_1);
         TEST_ASSERT(ret == PEL_SUCCESS);
 
         ret = pel_recv_msg(sv[0], rx_buf, &rx_len);
@@ -323,6 +342,8 @@ static void test_pel_oversized_packet(void)
 
 int32_t main(void)
 {
+    init_test_keys();
+
     printf("[RUNNING] test_pel_happy_path...\n");
     test_pel_happy_path();
     printf("[PASSED]  test_pel_happy_path\n");

@@ -3,10 +3,6 @@
 
 #include <stdint.h>
 
-#ifndef SECRET_KEY
-#define SECRET_KEY "1234"
-#endif
-
 #ifndef CB_HOST
 #define CB_HOST NULL
 #endif
@@ -15,7 +11,7 @@
 #define SERVER_PORT 1234
 #endif
 
-extern char *secret;
+extern const char *keyfile;
 extern char *cb_host;
 extern int server_port;
 

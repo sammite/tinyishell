@@ -22,7 +22,7 @@ try:
 except ImportError:
     pass
 
-DEFAULT_SECRET = os.environ.get("TSH_SECRET", "1234")
+DEFAULT_KEY = os.environ.get("TSH_KEY", "./tsh_key")
 DEFAULT_PORT = 1234
 DEFAULT_TSH_BIN = "./tsh"
 DEFAULT_REMOTE_CWD = "/"
@@ -45,23 +45,20 @@ class TshRepl(cmd.Cmd):
     def __init__(
         self,
         host="localhost",
-        secret=DEFAULT_SECRET,
+        keyfile=None,
         port=DEFAULT_PORT,
         tsh_bin=DEFAULT_TSH_BIN,
         initial_dir=DEFAULT_REMOTE_CWD,
         stdin=None,
         stdout=None,
-        is_key_file=False,
-        secret_given=False,
         use_c_bin=False,
+        secret=None,
     ):
         super().__init__(stdin=stdin, stdout=stdout)
         self.host = host
-        self.secret = secret
+        self.keyfile = keyfile or secret or DEFAULT_KEY
         self.port = port
         self.tsh_bin = tsh_bin
-        self.is_key_file = is_key_file
-        self.secret_given = secret_given
         self.use_c_bin = use_c_bin
 
         self.remote_cwd = posixpath.normpath(initial_dir) if initial_dir else DEFAULT_REMOTE_CWD
@@ -72,9 +69,7 @@ class TshRepl(cmd.Cmd):
         self.client = TshClient(
             host=self.host,
             port=self.port,
-            secret=self.secret,
-            is_key_file=self.is_key_file,
-            secret_given=self.secret_given,
+            keyfile=self.keyfile,
         )
         self.update_prompt()
 
@@ -97,8 +92,8 @@ class TshRepl(cmd.Cmd):
         if self.use_c_bin:
             cmd_args = [
                 self.tsh_bin,
-                "-s",
-                str(self.secret),
+                "-k",
+                str(self.keyfile),
                 "-p",
                 str(self.port),
                 self.host,
@@ -316,15 +311,16 @@ def parse_args():
         help="Arguments for single-shot action",
     )
     parser.add_argument(
-        "-s",
-        "--secret",
-        default=None,
-        help="Secret authentication key (defaults to TSH_SECRET env var or '1234')",
-    )
-    parser.add_argument(
         "-k",
         "--key",
-        help="Path to Ed25519 private key seed file",
+        default=DEFAULT_KEY,
+        help="Path to Ed25519 private key seed file (defaults to TSH_KEY env var or './tsh_key')",
+    )
+    parser.add_argument(
+        "-s",
+        "--secret",
+        dest="key",
+        help="Deprecated alias for -k/--key",
     )
     parser.add_argument("-p", "--port", type=int, default=DEFAULT_PORT, help="Server port")
     parser.add_argument(
@@ -363,13 +359,6 @@ def parse_args():
         args.action = real_action
         args.action_args = real_action_args
 
-    args.secret_given = args.secret is not None
-    if args.secret is None:
-        args.secret = DEFAULT_SECRET
-    if args.key:
-        args.secret = args.key
-        args.secret_given = True
-
     return args
 
 
@@ -382,9 +371,7 @@ def main():
         client = TshClient(
             host=args.host,
             port=args.port,
-            secret=args.secret,
-            is_key_file=bool(args.key),
-            secret_given=args.secret_given,
+            keyfile=args.key,
         )
         res = client.execute(args.action, *args.action_args, capture_output=False)
         sys.exit(res.returncode)
@@ -392,12 +379,10 @@ def main():
     # REPL mode
     repl = TshRepl(
         host=args.host,
-        secret=args.secret,
+        keyfile=args.key,
         port=args.port,
         tsh_bin=args.tsh_bin,
         initial_dir=args.dir,
-        is_key_file=bool(args.key),
-        secret_given=args.secret_given,
         use_c_bin=args.use_c_bin,
     )
 

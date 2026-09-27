@@ -43,13 +43,16 @@ def test_pel_c_unit_suite():
             os.remove(c_test_bin)
 
 
-def test_auth_failure_wrong_secret(tshd_daemon):
-    """Verifies that attempting connection with an incorrect key fails cleanly."""
+def test_auth_failure_wrong_key(tmp_path, tshd_daemon):
+    """Verifies that attempting connection with a mismatched 32-byte key fails cleanly."""
     config = tshd_daemon
+    wrong_key = tmp_path / "wrong_key"
+    wrong_key.write_bytes(b"\xaa" * 32)
+
     cmd = [
         config["tsh_path"],
-        "-s",
-        "definitely_wrong_secret",
+        "-k",
+        str(wrong_key),
         "localhost",
         "ls",
         "/",
@@ -60,33 +63,55 @@ def test_auth_failure_wrong_secret(tshd_daemon):
     assert res.stdout == ""
 
 
-def test_auth_failure_empty_secret(tshd_daemon):
-    """Verifies that attempting connection with an empty secret fails cleanly."""
+def test_auth_failure_missing_key_file(tshd_daemon):
+    """Verifies that attempting connection with a missing key file fails cleanly."""
     config = tshd_daemon
     cmd = [
         config["tsh_path"],
-        "-s",
-        "",
+        "-k",
+        "/path/does/not/exist/tsh_key_missing",
         "localhost",
         "ls",
         "/",
     ]
     res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    assert res.returncode == 10
-    assert "Authentication failed." in res.stderr
+    assert res.returncode == 1
+    assert "No such file or directory" in res.stderr
     assert res.stdout == ""
 
 
-def test_auth_recovery_after_failed_attempts(tshd_daemon):
+def test_auth_failure_short_key_file(tmp_path, tshd_daemon):
+    """Verifies that attempting connection with a key file shorter than 32 bytes fails cleanly."""
+    config = tshd_daemon
+    short_key = tmp_path / "short_key"
+    short_key.write_bytes(b"shortkey")
+
+    cmd = [
+        config["tsh_path"],
+        "-k",
+        str(short_key),
+        "localhost",
+        "ls",
+        "/",
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    assert res.returncode == 1
+    assert "Key file must be at least 32 bytes" in res.stderr
+    assert res.stdout == ""
+
+
+def test_auth_recovery_after_failed_attempts(tmp_path, tshd_daemon):
     """Verifies daemon remains responsive and stable after multiple failed authentications."""
     config = tshd_daemon
+    wrong_key = tmp_path / "wrong_key_flood"
+    wrong_key.write_bytes(b"\x55" * 32)
 
     # Send 5 invalid attempts in rapid succession
-    for i in range(5):
+    for _ in range(5):
         bad_cmd = [
             config["tsh_path"],
-            "-s",
-            f"attacker_attempt_{i}",
+            "-k",
+            str(wrong_key),
             "localhost",
             "ls",
             "/",
@@ -100,8 +125,8 @@ def test_auth_recovery_after_failed_attempts(tshd_daemon):
     # Legitimate connection must succeed immediately
     good_cmd = [
         config["tsh_path"],
-        "-s",
-        config["secret"],
+        "-k",
+        config["key_path"],
         "localhost",
         "ls",
         "/",

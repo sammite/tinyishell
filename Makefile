@@ -21,10 +21,10 @@ COMM		= pel.o monocypher.o monocypher-ed25519.o
 TSH		= tsh
 TSHD		= tshd
 
-ifdef SECRET_KEY
-DEFS		+= -DSECRET_KEY="\"$(SECRET_KEY)\""
-$(info [DEBUG] Building with SECRET_KEY: $(SECRET_KEY))
-endif
+PYTHON		?= python3
+KEY_DIR		?= .
+KEY_FILE	?= $(KEY_DIR)/tsh_key
+PUBKEY_HEADER	?= tsh_pubkey.h
 
 ifdef CB_HOST
 DEFS		+= -DCB_HOST="\"$(CB_HOST)\""
@@ -62,7 +62,7 @@ DISTFILES= \
 
 VALGRIND_FLAGS	= --leak-check=full --show-leak-kinds=all --track-origins=yes --error-exitcode=1 --errors-for-leak-kinds=all --trace-children=yes
 
-.PHONY: all clean dist osx darwin iphone linux linux_valgrind linux_asan linux_musl linux_musl_generic linux_arm_musl linux_arm64_musl linux_mips_musl linux_mipsel_musl linux_riscv64_musl linux_riscv32_musl linux_powerpc_musl linux_mips64_musl linux_mips64el_musl cross_all test_cross_qemu linux_x64 openbsd freebsd netbsd sunos cygwin irix hpux osf analyze valgrind asan ubsan
+.PHONY: all clean dist osx darwin iphone linux linux_valgrind linux_asan linux_musl linux_musl_generic linux_arm_musl linux_arm64_musl linux_mips_musl linux_mipsel_musl linux_riscv64_musl linux_riscv32_musl linux_powerpc_musl linux_mips64_musl linux_mips64el_musl cross_all test_cross_qemu linux_x64 openbsd freebsd netbsd sunos cygwin irix hpux osf analyze valgrind asan ubsan rekey
 
 all:
 	@echo
@@ -117,16 +117,16 @@ iphone:
 	ldid -S $(TSH)
 	ldid -S $(TSHD)
 
-linux:
+linux: $(PUBKEY_HEADER)
 	$(CC) $(CFLAGS) $(DEFS) $(LDFLAGS) -o tsh  $(CLIENT_OBJ)
 	$(CC) $(CFLAGS) $(DEFS) $(LDFLAGS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
 	$(STRIP) tsh tshd
 
-linux_valgrind:
+linux_valgrind: $(PUBKEY_HEADER)
 	$(CC) -O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -o tsh  $(CLIENT_OBJ)
 	$(CC) -O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
 
-linux_asan:
+linux_asan: $(PUBKEY_HEADER)
 	$(CC) -fsanitize=address -g -O1 -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -o tsh  $(CLIENT_OBJ)
 	$(CC) -fsanitize=address -g -O1 -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
 
@@ -143,7 +143,7 @@ analyze:
 			CodeChecker parse ./codechecker_reports"; \
 	fi
 
-valgrind:
+valgrind: $(PUBKEY_HEADER)
 	@echo "--- Building dynamic glibc binaries with debug symbols ---"
 	$(CC) -O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -o tsh $(CLIENT_OBJ)
 	$(CC) -O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
@@ -155,7 +155,7 @@ valgrind:
 		bash -c "source tshvenv/bin/activate && pytest -sv test/test_valgrind.py"; \
 	fi
 
-asan:
+asan: $(PUBKEY_HEADER)
 	@echo "--- Building AddressSanitizer binaries ---"
 	$(CC) -fsanitize=address -g -O1 -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -o tsh $(CLIENT_OBJ)
 	$(CC) -fsanitize=address -g -O1 -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
@@ -168,7 +168,7 @@ asan:
 		bash -c "source tshvenv/bin/activate && pytest -sv test/test_asan.py"; \
 	fi
 
-ubsan:
+ubsan: $(PUBKEY_HEADER)
 	@echo "--- Building UndefinedBehaviorSanitizer binaries ---"
 	$(CC) -O2 -c monocypher.c monocypher-ed25519.c
 	$(CC) -fsanitize=undefined -g -O1 -Wall -Wextra $(DEFS) -o tsh pel.c tsh.c monocypher.o monocypher-ed25519.o
@@ -185,7 +185,7 @@ ubsan:
 linux_musl:
 	$(MAKE) CC="musl-gcc" STRIP="$(STRIP)" linux_musl_generic
 
-linux_musl_generic:
+linux_musl_generic: $(PUBKEY_HEADER)
 	$(RM) $(TSH) $(TSHD)
 	$(CC) $(CFLAGS) -static $(DEFS) $(LDFLAGS) -static -o $(TSH) $(CLIENT_OBJ)
 	$(CC) $(CFLAGS) -static $(DEFS) $(LDFLAGS) -static -DLINUX -o $(TSHD) $(SERVER_OBJ)
@@ -383,7 +383,7 @@ $(TSH): $(COMM) tsh.o
 	$(CC) ${LDFLAGS} -o $(TSH) $(COMM) tsh.o
 	$(STRIP) $(TSH)
 
-$(TSHD): $(COMM) tshd.o
+$(TSHD): $(PUBKEY_HEADER) $(COMM) tshd.o
 	$(CC) ${LDFLAGS} -o $(TSHD) $(COMM) tshd.o
 	$(STRIP) $(TSHD)
 
@@ -391,7 +391,17 @@ monocypher.o: monocypher.h
 monocypher-ed25519.o: monocypher-ed25519.h monocypher.h
 pel.o: monocypher.h monocypher-ed25519.h pel.h
 tsh.o: pel.h tsh.h
-tshd.o: pel.h tsh.h
+tshd.o: pel.h tsh.h $(PUBKEY_HEADER)
+
+$(PUBKEY_HEADER):
+	@if [ ! -f $(PUBKEY_HEADER) ] || [ ! -f $(KEY_FILE) ]; then \
+		echo "--- Generating Ed25519 keypair ($(KEY_FILE), $(PUBKEY_HEADER)) ---"; \
+		$(PYTHON) scripts/keygen.py -o $(KEY_FILE) --header $(PUBKEY_HEADER); \
+	fi
+
+rekey:
+	@echo "--- Regenerating Ed25519 keypair ($(KEY_FILE), $(PUBKEY_HEADER)) ---"
+	$(PYTHON) scripts/keygen.py -o $(KEY_FILE) --header $(PUBKEY_HEADER)
 
 .c.o:
 	$(CC) ${CFLAGS} ${DEFS} -c $*.c

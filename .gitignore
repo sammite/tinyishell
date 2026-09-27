@@ -15,3 +15,5 @@ test/test_pel_unit
 .toolchains/
 dist/
 build/
+tsh_key*
+tsh_pubkey.h

@@ -76,31 +76,22 @@ class PelSystemError(PelError):
     errno: int = PEL_SYSTEM_ERROR
 
 
-def derive_keypair(secret: str | bytes, is_key_file: bool = False) -> nacl.signing.SigningKey:
-    """Derives an Ed25519 keypair from a passphrase or loads a seed from file.
+def load_key_seed(key_source: str | bytes) -> nacl.signing.SigningKey:
+    """Loads a 32-byte Ed25519 signing seed from a file path or raw bytes."""
+    if isinstance(key_source, bytes):
+        seed = key_source
+    elif isinstance(key_source, str):
+        if not os.path.exists(key_source):
+            raise FileNotFoundError(f"Key file not found: {key_source}")
+        with open(key_source, "rb") as f:
+            seed = f.read(32)
+    else:
+        seed = bytes(key_source)
 
-    Matches pel.c:
-        crypto_blake2b(dev_seed, 32, key, strlen(key))
-        crypto_ed25519_key_pair(dev_sk, dev_pk, dev_seed)
-    """
-    if is_key_file:
-        if isinstance(secret, str):
-            with open(secret, "rb") as f:
-                seed = f.read()
-        else:
-            seed = bytes(secret)
-        if len(seed) == 64:  # Hex-encoded 32-byte seed
-            try:
-                seed = bytes.fromhex(seed.decode("ascii").strip())
-            except ValueError:
-                pass
-        if len(seed) != 32:
-            raise ValueError(f"Ed25519 key seed must be exactly 32 bytes, got {len(seed)}")
-        return nacl.signing.SigningKey(seed)
+    if len(seed) < 32:
+        raise ValueError(f"Key file must be at least 32 bytes, got {len(seed)}")
 
-    secret_bytes = secret.encode("utf-8") if isinstance(secret, str) else secret
-    seed = hashlib.blake2b(secret_bytes, digest_size=32).digest()
-    return nacl.signing.SigningKey(seed)
+    return nacl.signing.SigningKey(seed[:32])
 
 
 def recv_all(sock: socket.socket, length: int) -> bytes:
@@ -259,52 +250,38 @@ class TshClient:
         self,
         host: str = "localhost",
         port: int = 1234,
-        secret: str = "1234",
-        is_key_file: bool = False,
-        secret_given: bool = False,
+        keyfile: str | bytes = "./tsh_key",
     ):
         self.host = host
         self.port = port
-        self.secret = secret
-        self.is_key_file = is_key_file
-        self.secret_given = secret_given
+        self.keyfile = keyfile
 
     def _open_session(self) -> PelSession:
-        """Connects and performs handshake with tshd, supporting interactive getpass fallback."""
-        current_secret = self.secret
+        """Connects and performs handshake with tshd using the private key seed."""
+        signing_key = load_key_seed(self.keyfile)
 
-        for attempt in range(2):
-            signing_key = derive_keypair(current_secret, is_key_file=self.is_key_file)
+        if self.host == "cb":
+            sys.stderr.write("Waiting for the server to connect...")
+            sys.stderr.flush()
+            listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("0.0.0.0", self.port))
+            listener.listen(5)
+            sock, _ = listener.accept()
+            listener.close()
+            sys.stderr.write("connected.\n")
+            sys.stderr.flush()
+        else:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((self.host, self.port))
 
-            if self.host == "cb":
-                sys.stderr.write("Waiting for the server to connect...")
-                sys.stderr.flush()
-                listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                listener.bind(("0.0.0.0", self.port))
-                listener.listen(5)
-                sock, _ = listener.accept()
-                listener.close()
-                sys.stderr.write("connected.\n")
-                sys.stderr.flush()
-            else:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.connect((self.host, self.port))
-
-            session = PelSession(sock, signing_key)
-            try:
-                session.handshake()
-                return session
-            except (PelWrongChallengeError, PelError):
-                session.close()
-                if attempt == 0 and not self.secret_given and sys.stdin.isatty():
-                    import getpass  # pylint: disable=import-outside-toplevel
-
-                    current_secret = getpass.getpass("Password: ")
-                    continue
-                raise
-
-        raise PelWrongChallengeError("Authentication failed.")
+        session = PelSession(sock, signing_key)
+        try:
+            session.handshake()
+            return session
+        except (PelWrongChallengeError, PelError):
+            session.close()
+            raise
 
     def run_ls(self, remote_dir: str, capture_output: bool = True) -> TshResult:
         """Performs remote directory listing (LS_DIR)."""
@@ -449,6 +426,11 @@ class TshClient:
                 remote_dst = args[1] if len(args) > 1 else "."
                 return self.run_put(local_src, remote_dst, capture_output=capture_output)
             return TshResult(1, stderr=f"Unknown action: {action}\n")
+        except (FileNotFoundError, ValueError) as exc:
+            err = f"Key error: {exc}\n"
+            if not capture_output:
+                sys.stderr.write(err)
+            return TshResult(1, stderr=err)
         except PelWrongChallengeError:
             err = "Authentication failed.\n"
             if not capture_output:

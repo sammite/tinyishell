@@ -6,11 +6,17 @@ import subprocess
 import time
 
 
-def build_custom_tsh(target, secret, port, cb_mode=False, cb_host=None):
+def build_custom_tsh(target, key_path, port, cb_mode=False, cb_host=None):
     """Clean and build tsh/tshd with specific compile-time definitions."""
     subprocess.run(["make", "clean"], capture_output=True, check=False)
 
-    cmd = ["make", target, f"SECRET_KEY={secret}", f"SERVER_PORT={port}"]
+    if not os.path.exists(key_path) or not os.path.exists("tsh_pubkey.h"):
+        subprocess.run(
+            ["python3", "scripts/keygen.py", "-o", key_path, "--header", "tsh_pubkey.h"],
+            check=True,
+        )
+
+    cmd = ["make", target, f"SERVER_PORT={port}"]
     if cb_mode:
         cmd.append("CB_MODE=1")
     if cb_host:
@@ -42,13 +48,13 @@ def test_system_nested_deployment(request):
     else:
         target = "linux"
 
-    secret = "system_test_password"
+    key_path = os.path.abspath("./tsh_key")
     primary_port = 1234
     nested_port = 5555
 
-    primary_tsh, primary_tshd = build_custom_tsh(target, secret, primary_port)
+    primary_tsh, primary_tshd = build_custom_tsh(target, key_path, primary_port)
     nested_tsh, nested_tshd = build_custom_tsh(
-        target, secret, nested_port, cb_mode=True, cb_host="127.0.0.1"
+        target, key_path, nested_port, cb_mode=True, cb_host="127.0.0.1"
     )
 
     subprocess.run(["pkill", "-f", "tshd_primary"], capture_output=True, check=False)
@@ -72,8 +78,8 @@ def test_system_nested_deployment(request):
             primary_tsh,
             "-p",
             str(primary_port),
-            "-s",
-            secret,
+            "-k",
+            key_path,
             "127.0.0.1",
             "put",
             nested_tshd,
@@ -91,8 +97,8 @@ def test_system_nested_deployment(request):
             primary_tsh,
             "-p",
             str(primary_port),
-            "-s",
-            secret,
+            "-k",
+            key_path,
             "127.0.0.1",
             "exec",
             f"{chmod_bin} +x {remote_path}",
@@ -104,8 +110,8 @@ def test_system_nested_deployment(request):
             primary_tsh,
             "-p",
             str(primary_port),
-            "-s",
-            secret,
+            "-k",
+            key_path,
             "127.0.0.1",
             "exec",
             remote_path,
@@ -122,7 +128,7 @@ def test_system_nested_deployment(request):
         print("Waiting for connect-back (at least 5s)...")
         time.sleep(7)
 
-        cmd_cb = [primary_tsh, "-p", str(nested_port), "-s", secret, "cb", "ls", "/"]
+        cmd_cb = [primary_tsh, "-p", str(nested_port), "-k", key_path, "cb", "ls", "/"]
         res = subprocess.run(cmd_cb, capture_output=True, text=True, timeout=20, check=False)
 
         assert res.returncode == 0, f"Connect-back 'ls' failed: {res.stderr}"

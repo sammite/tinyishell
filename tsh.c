@@ -19,7 +19,7 @@
 #include "tsh.h"
 #include "pel.h"
 
-char *secret = SECRET_KEY;
+const char *keyfile = "./tsh_key";
 char *cb_host = CB_HOST;
 int server_port = SERVER_PORT;
 
@@ -36,11 +36,29 @@ int tsh_execv( int server, const char *argv3 );
 
 void pel_error( const char *s );
 
+static int load_key_seed( const char *path, uint8_t seed[32] )
+{
+    int fd = open( path, O_RDONLY );
+    if( fd < 0 )
+    {
+        perror( path );
+        return -1;
+    }
+    ssize_t n = read( fd, seed, 32 );
+    close( fd );
+    if( n != 32 )
+    {
+        fprintf( stderr, "%s: Key file must be at least 32 bytes\n", path );
+        return -1;
+    }
+    return 0;
+}
+
 /* program entry point */
 
 void usage( const char *argv0 )
 {
-    fprintf( stderr, "Usage: %s [ -s secret ] [ -p port ] [command]\n"
+    fprintf( stderr, "Usage: %s [ -k keyfile ] [ -p port ] [command]\n"
         "\n"
         "   <hostname|cb>\n"
         "   <hostname|cb> ls <remote-dir>\n"
@@ -58,11 +76,16 @@ int main( int argc, char *argv[] )
     struct sockaddr_in server_addr;
     struct sockaddr_in client_addr;
     struct hostent *server_host;
-    char action, *password;
+    char action;
+    uint8_t dev_seed[32];
 
-    int secret_given = 0;
+    const char *env_key = getenv( "TSH_KEY" );
+    if( env_key != NULL && strlen( env_key ) > 0 )
+    {
+        keyfile = env_key;
+    }
 
-    while( ( opt = getopt( argc, argv, "p:s:" ) ) != -1 )
+    while( ( opt = getopt( argc, argv, "p:k:s:" ) ) != -1 )
     {
         switch( opt )
         {
@@ -73,9 +96,9 @@ int main( int argc, char *argv[] )
                     usage( *argv );
                 }
                 break;
+            case 'k':
             case 's':
-                secret = optarg; 
-                secret_given = 1;
+                keyfile = optarg;
                 break;
             default: /* '?' */
                 usage( *argv );
@@ -85,8 +108,6 @@ int main( int argc, char *argv[] )
     argv += ( optind - 1 );
     argc -= ( optind - 1 );
     action = 0;
-
-    password = NULL;
 
     /* check the arguments */
 
@@ -219,47 +240,26 @@ int main( int argc, char *argv[] )
         close( client );
     }
 
+    /* load key seed from keyfile */
+
+    if( load_key_seed( keyfile, dev_seed ) != 0 )
+    {
+        close( server );
+        return( 1 );
+    }
+
     /* setup the packet encryption layer */
 
-    if( password == NULL )
+    ret = pel_client_init( server, dev_seed );
+
+    memset( dev_seed, 0, sizeof( dev_seed ) );
+
+    if( ret != PEL_SUCCESS )
     {
-        /* 1st try, using the built-in secret key */
-
-        ret = pel_client_init( server, secret );
-
-        if( ret != PEL_SUCCESS )
-        {
-            close( server );
-
-            if( secret_given || !isatty( STDIN_FILENO ) )
-            {
-                fprintf( stderr, "Authentication failed.\n" );
-                return( 10 );
-            }
-
-            /* secret key invalid, so ask for a password */
-
-            password = getpass( "Password: " );
-            continue;
-        }
-    }
-    else
-    {
-        /* 2nd try, with the user's password */
-
-        ret = pel_client_init( server, password );
-
-        memset( password, 0, strlen( password ) );
-
-        if( ret != PEL_SUCCESS )
-        {
-            /* password invalid, exit */
-
-            fprintf( stderr, "Authentication failed.\n" );
-            shutdown( server, 2 );
-            return( 10 );
-        }
-
+        fprintf( stderr, "Authentication failed.\n" );
+        shutdown( server, 2 );
+        close( server );
+        return( 10 );
     }
 
     break;

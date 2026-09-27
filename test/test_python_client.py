@@ -4,7 +4,7 @@ import hashlib
 import os
 import subprocess
 
-from tsh_pel import derive_keypair
+from tsh_pel import load_key_seed
 
 
 def get_sha256(path: str) -> str:
@@ -22,8 +22,8 @@ def test_python_client_direct_cli_ls(tshd_daemon):
     cmd = [
         "python3",
         "tsh_client.py",
-        "-s",
-        config["secret"],
+        "-k",
+        config["key_path"],
         "-p",
         str(config["port"]),
         "localhost",
@@ -41,8 +41,8 @@ def test_python_client_direct_cli_exec(tshd_daemon):
     cmd = [
         "python3",
         "tsh_client.py",
-        "-s",
-        config["secret"],
+        "-k",
+        config["key_path"],
         "-p",
         str(config["port"]),
         "localhost",
@@ -71,8 +71,8 @@ def test_python_client_direct_cli_put_get_integrity(tshd_daemon, tmp_path):
     put_cmd = [
         "python3",
         "tsh_client.py",
-        "-s",
-        config["secret"],
+        "-k",
+        config["key_path"],
         "-p",
         str(config["port"]),
         "localhost",
@@ -90,8 +90,8 @@ def test_python_client_direct_cli_put_get_integrity(tshd_daemon, tmp_path):
     get_cmd = [
         "python3",
         "tsh_client.py",
-        "-s",
-        config["secret"],
+        "-k",
+        config["key_path"],
         "-p",
         str(config["port"]),
         "localhost",
@@ -111,8 +111,8 @@ def test_python_client_direct_cli_put_get_integrity(tshd_daemon, tmp_path):
     cleanup_cmd = [
         "python3",
         "tsh_client.py",
-        "-s",
-        config["secret"],
+        "-k",
+        config["key_path"],
         "-p",
         str(config["port"]),
         "localhost",
@@ -122,14 +122,16 @@ def test_python_client_direct_cli_put_get_integrity(tshd_daemon, tmp_path):
     subprocess.run(cleanup_cmd, capture_output=True, check=False)
 
 
-def test_python_client_auth_failure_wrong_secret(tshd_daemon):
-    """Verify that wrong secret key returns exit code 10 and prints to stderr."""
+def test_python_client_auth_failure_wrong_key(tshd_daemon, tmp_path):
+    """Verify that wrong 32-byte key returns exit code 10 and prints to stderr."""
     config = tshd_daemon
+    wrong_key = tmp_path / "wrong_key"
+    wrong_key.write_bytes(b"\xbb" * 32)
     cmd = [
         "python3",
         "tsh_client.py",
-        "-s",
-        "definitely_wrong_secret",
+        "-k",
+        str(wrong_key),
         "-p",
         str(config["port"]),
         "localhost",
@@ -142,14 +144,14 @@ def test_python_client_auth_failure_wrong_secret(tshd_daemon):
     assert res.stdout == ""
 
 
-def test_python_client_auth_failure_empty_secret(tshd_daemon):
-    """Verify that empty secret key returns exit code 10."""
+def test_python_client_auth_failure_missing_key(tshd_daemon):
+    """Verify that missing key file returns exit code 1."""
     config = tshd_daemon
     cmd = [
         "python3",
         "tsh_client.py",
-        "-s",
-        "",
+        "-k",
+        "/path/does/not/exist/missing_key",
         "-p",
         str(config["port"]),
         "localhost",
@@ -157,8 +159,8 @@ def test_python_client_auth_failure_empty_secret(tshd_daemon):
         "/",
     ]
     res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    assert res.returncode == 10
-    assert "Authentication failed." in res.stderr
+    assert res.returncode == 1
+    assert "Key file not found" in res.stderr or "No such file" in res.stderr
     assert res.stdout == ""
 
 
@@ -168,5 +170,5 @@ def test_python_client_raw_key_seed_derivation(tmp_path):
     key_file = tmp_path / "ed25519.seed"
     key_file.write_bytes(seed_bytes)
 
-    keypair = derive_keypair(str(key_file), is_key_file=True)
-    assert bytes(keypair) == seed_bytes
+    signing_key = load_key_seed(str(key_file))
+    assert bytes(signing_key) == seed_bytes

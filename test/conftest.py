@@ -27,7 +27,8 @@ def pytest_addoption(parser):
 @pytest.fixture(scope="session")
 def build_tsh(request):
     """Builds tsh and tshd binaries once per session."""
-    secret = "testkey"
+    key_path = "./tsh_key"
+    pubkey_path = "tsh_pubkey.h"
     port = 1234
 
     # Determine target
@@ -42,14 +43,20 @@ def build_tsh(request):
 
     # Clean and build
     subprocess.run(["make", "clean"], capture_output=True, check=False)
-    cmd = ["make", target, f"SECRET_KEY={secret}", f"SERVER_PORT={port}"]
+    if not os.path.exists(key_path) or not os.path.exists(pubkey_path):
+        subprocess.run(
+            ["python3", "scripts/keygen.py", "-o", key_path, "--header", pubkey_path],
+            check=True,
+        )
+    cmd = ["make", target, f"SERVER_PORT={port}"]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
     if result.returncode != 0:
         pytest.fail(f"Build failed: {result.stderr}")
 
     return {
-        "secret": secret,
+        "key_path": key_path,
+        "secret": key_path,
         "port": port,
         "tsh_path": "./tsh",
         "tshd_path": "./tshd",
