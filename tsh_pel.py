@@ -79,7 +79,18 @@ class PelSystemError(PelError):
 
 
 def load_key_seed(key_source: str | bytes) -> nacl.signing.SigningKey:
-    """Loads a 32-byte Ed25519 signing seed from a file path or raw bytes."""
+    """Loads a 32-byte Ed25519 signing seed from a file path or raw bytes.
+
+    Args:
+        key_source: Path to the key file or raw 32-byte seed.
+
+    Returns:
+        nacl.signing.SigningKey: The loaded Ed25519 signing key.
+
+    Raises:
+        FileNotFoundError: If key_source is a string path that does not exist.
+        ValueError: If the key seed is shorter than 32 bytes.
+    """
     if isinstance(key_source, bytes):
         seed = key_source
     elif isinstance(key_source, str):
@@ -97,7 +108,19 @@ def load_key_seed(key_source: str | bytes) -> nacl.signing.SigningKey:
 
 
 def recv_all(sock: socket.socket, length: int) -> bytes:
-    """Reliably receives an exact number of bytes from the socket."""
+    """Reliably receives an exact number of bytes from the socket.
+
+    Args:
+        sock: Connected stream socket to read from.
+        length: Exact number of bytes to receive.
+
+    Returns:
+        bytes: The received data buffer of exact requested length.
+
+    Raises:
+        PelConnClosedError: If peer closed connection before sending any bytes.
+        PelSystemError: If socket returns EOF before reading the full requested length.
+    """
     buf = bytearray()
     while len(buf) < length:
         chunk = sock.recv(length - len(buf))
@@ -113,6 +136,12 @@ class PelSession:
     """Encapsulates an authenticated and encrypted PEL communication session."""
 
     def __init__(self, sock: socket.socket, signing_key: nacl.signing.SigningKey):
+        """Initializes a new PEL communication session.
+
+        Args:
+            sock: Connected stream socket.
+            signing_key: Developer Ed25519 private signing key for authentication.
+        """
         self.sock = sock
         self.signing_key = signing_key
         self.send_key: bytes = b""
@@ -123,7 +152,16 @@ class PelSession:
         self.recv_seq: int = 0
 
     def handshake(self) -> None:
-        """Executes client-side PEL session handshake matching pel.c:pel_client_init."""
+        """Executes client-side PEL session handshake matching pel.c:pel_client_init.
+
+        Performs ephemeral key exchange (X25519), developer key transcript signature
+        verification (Ed25519), directional key derivation (BLAKE2b), and server
+        confirmation verification.
+
+        Raises:
+            PelWrongChallengeError: If challenge signature or server confirmation fails.
+            PelConnClosedError: If remote server closes the connection during handshake.
+        """
         # 1. Recv Msg 1 from Server: s_epk (32B) || n_s (16B) = 48B
         msg1 = recv_all(self.sock, 48)
         s_epk = msg1[:32]
@@ -173,6 +211,13 @@ class PelSession:
         [0..1]  = 16-bit big-endian length L
         [2..17] = 16-byte Poly1305 MAC tag
         [18..]  = ciphertext (L bytes)
+
+        Args:
+            data: Raw plaintext payload bytes to encrypt and send.
+
+        Raises:
+            PelBadMsgLengthError: If data length exceeds BUFSIZE (4096 bytes).
+            OSError: If a network socket transmission error occurs.
         """
         length = len(data)
         if length > BUFSIZE:
@@ -193,7 +238,14 @@ class PelSession:
     def recv_msg(self) -> bytes | None:
         """Receives and decrypts an authenticated message.
 
-        Returns None if remote peer has closed connection cleanly.
+        Returns:
+            bytes: Decrypted plaintext message payload, or empty bytes b"" for
+                an authentic 0-byte frame.
+            None: If the remote peer cleanly closed the TCP connection.
+
+        Raises:
+            PelBadMsgLengthError: If incoming length exceeds BUFSIZE.
+            PelCorruptedDataError: If MAC verification fails or ciphertext is corrupt.
         """
         try:
             hdr = recv_all(self.sock, 2)
@@ -236,7 +288,7 @@ class PelSession:
         self.close()
 
     def close(self) -> None:
-        """Closes the underlying socket."""
+        """Closes the underlying network socket."""
         try:
             self.sock.shutdown(socket.SHUT_RDWR)
         except OSError:
@@ -244,9 +296,21 @@ class PelSession:
         self.sock.close()
 
     def __enter__(self) -> PelSession:
+        """Context manager entry returning the active session.
+
+        Returns:
+            PelSession: The active session instance.
+        """
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Context manager exit sending QUIT_SESSION and closing the session.
+
+        Args:
+            exc_type: Exception type if raised within context.
+            exc_val: Exception value if raised within context.
+            exc_tb: Exception traceback if raised within context.
+        """
         self.quit()
 
 
@@ -268,12 +332,27 @@ class TshClient:
         port: int = 1234,
         keyfile: str | bytes = "./tsh_key",
     ):
+        """Initializes a TshClient instance.
+
+        Args:
+            host: Remote server hostname, IP, or 'cb' for connect-back mode.
+            port: Server port to connect to (or local port to bind in connect-back mode).
+            keyfile: Path to 32-byte Ed25519 private key seed file or raw bytes.
+        """
         self.host = host
         self.port = port
         self.keyfile = keyfile
 
     def _open_session(self) -> PelSession:
-        """Connects and performs handshake with tshd using the private key seed."""
+        """Connects and performs handshake with tshd using the private key seed.
+
+        Returns:
+            PelSession: Authenticated and initialized encrypted session.
+
+        Raises:
+            PelWrongChallengeError: If authentication challenge fails.
+            PelError: On protocol initialization failure.
+        """
         signing_key = load_key_seed(self.keyfile)
 
         if self.host == "cb":
@@ -301,12 +380,20 @@ class TshClient:
             raise
 
     def open_session(self) -> PelSession:
-        """Connects and authenticates, returning an active PelSession."""
+        """Connects and authenticates, returning an active PelSession.
+
+        Returns:
+            PelSession: Active authenticated session.
+        """
         return self._open_session()
 
     @contextlib.contextmanager
     def session(self):
-        """Context manager that opens and yields a persistent PelSession, quitting on exit."""
+        """Context manager that opens and yields a persistent PelSession, quitting on exit.
+
+        Yields:
+            PelSession: Active persistent session.
+        """
         sess = self.open_session()
         try:
             yield sess
@@ -319,7 +406,17 @@ class TshClient:
         capture_output: bool = True,
         session: PelSession | None = None,
     ) -> TshResult:
-        """Performs remote directory listing (LS_DIR)."""
+        """Performs remote directory listing (LS_DIR).
+
+        Args:
+            remote_dir: Target directory path to list on the remote server.
+            capture_output: If True, returns listing in stdout; otherwise writes to stdout.
+            session: Optional persistent PelSession to reuse. If None, opens an
+                ephemeral session and terminates it upon completion.
+
+        Returns:
+            TshResult: Command result with returncode and output.
+        """
         owns_session = session is None
         s = self.open_session() if owns_session else session
         try:
@@ -349,7 +446,17 @@ class TshClient:
         capture_output: bool = True,
         session: PelSession | None = None,
     ) -> TshResult:
-        """Executes a command on the remote server (EXEC_BIN)."""
+        """Executes a command on the remote server (EXEC_BIN).
+
+        Args:
+            cmd_str: Command line string to execute remotely via execv.
+            capture_output: If True, captures exit status; otherwise writes to stdout.
+            session: Optional persistent PelSession to reuse. If None, opens an
+                ephemeral session and terminates it upon completion.
+
+        Returns:
+            TshResult: Result containing the remote process exit code.
+        """
         owns_session = session is None
         s = self.open_session() if owns_session else session
         try:
@@ -380,7 +487,18 @@ class TshClient:
         capture_output: bool = True,
         session: PelSession | None = None,
     ) -> TshResult:
-        """Downloads a remote file (GET_FILE)."""
+        """Downloads a remote file (GET_FILE).
+
+        Args:
+            remote_src: Path of the source file on the remote server.
+            local_dst: Local file path or directory to save the downloaded file.
+            capture_output: If True, suppresses live byte transfer updates.
+            session: Optional persistent PelSession to reuse. If None, opens an
+                ephemeral session and terminates it upon completion.
+
+        Returns:
+            TshResult: Result indicating success (0) or local file creation error (14).
+        """
         # Determine local pathname matching tsh.c tsh_get_file
         filename = posixpath.basename(remote_src.rstrip("/"))
         if os.path.isdir(local_dst):
@@ -427,7 +545,12 @@ class TshClient:
     ) -> bytes | None:
         """Retrieves a remote file directly into memory as bytes.
 
-        Returns None if connection fails or if remote file is inaccessible.
+        Args:
+            remote_src: Path of the remote file to read.
+            session: Optional persistent PelSession to reuse.
+
+        Returns:
+            bytes: Complete file contents in bytes, or None if inaccessible.
         """
         owns_session = session is None
         try:
@@ -459,7 +582,17 @@ class TshClient:
         capture_output: bool = True,
         session: PelSession | None = None,
     ) -> TshResult:
-        """Uploads a local file to the remote server (PUT_FILE)."""
+        """Uploads a local file to the remote server (PUT_FILE).
+
+        Args:
+            local_src: Path of local file to upload.
+            remote_dst: Destination remote directory or file path.
+            capture_output: If True, suppresses live transfer updates.
+            session: Optional persistent PelSession to reuse.
+
+        Returns:
+            TshResult: Result indicating success (0) or error code.
+        """
         filename = os.path.basename(local_src)
         if remote_dst.endswith("/"):
             remote_pathname = remote_dst + filename
@@ -514,7 +647,15 @@ class TshClient:
         capture_output: bool = True,
         session: PelSession | None = None,
     ) -> TshResult:
-        """Retrieves and displays running processes from remote /proc."""
+        """Retrieves and displays running processes from remote /proc.
+
+        Args:
+            capture_output: If True, captures table in stdout; otherwise writes directly.
+            session: Optional persistent PelSession to reuse.
+
+        Returns:
+            TshResult: Result containing the formatted process table.
+        """
         owns_session = session is None
         s = self.open_session() if owns_session else session
         try:
@@ -588,6 +729,7 @@ class TshClient:
             procs.sort(key=lambda x: x["pid"])
 
             def format_rss(n_bytes: int) -> str:
+                """Formats a byte count into a human-readable RSS memory string (e.g. 4.2M)."""
                 if n_bytes == 0:
                     return "0B"
                 if n_bytes < 1024 * 1024:
@@ -617,7 +759,17 @@ class TshClient:
         capture_output: bool = True,
         session: PelSession | None = None,
     ) -> TshResult:
-        """Dispatches an action string (matching the CLI verbs)."""
+        """Dispatches an action string (matching the CLI verbs).
+
+        Args:
+            action: Action verb ('ls', 'exec', 'get', 'put', 'ps').
+            *args: Positional arguments for the specified action.
+            capture_output: Whether to capture stdout/stderr in the result.
+            session: Optional persistent PelSession to reuse.
+
+        Returns:
+            TshResult: Normalized result with returncode, stdout, and stderr.
+        """
         try:
             if action == "ls":
                 target = args[0] if args else "/"

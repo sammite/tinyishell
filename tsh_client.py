@@ -26,8 +26,15 @@ DEFAULT_PORT = 1234
 DEFAULT_REMOTE_CWD = "/"
 
 
-def safe_shlex_split(arg: str):
-    """Safely splits a command argument string, catching unclosed quotes."""
+def safe_shlex_split(arg: str) -> list[str] | None:
+    """Safely splits a command argument string, catching unclosed quotes.
+
+    Args:
+        arg: Raw shell argument string to split.
+
+    Returns:
+        list[str] | None: Parsed argument tokens, or None if unclosed quote syntax error.
+    """
     try:
         return shlex.split(arg)
     except ValueError as exc:
@@ -42,15 +49,27 @@ class TshRepl(cmd.Cmd):
 
     def __init__(
         self,
-        host="localhost",
-        keyfile=None,
-        port=DEFAULT_PORT,
-        initial_dir=DEFAULT_REMOTE_CWD,
+        host: str = "localhost",
+        keyfile: str | bytes | None = None,
+        port: int = DEFAULT_PORT,
+        initial_dir: str = DEFAULT_REMOTE_CWD,
         stdin=None,
         stdout=None,
-        secret=None,
+        secret: str | bytes | None = None,
         **_kwargs,
     ):
+        """Initializes the TshRepl interactive shell.
+
+        Args:
+            host: Remote server hostname or IP.
+            keyfile: Path to 32-byte Ed25519 private key seed file or raw bytes.
+            port: Server port to connect to.
+            initial_dir: Initial remote working directory context.
+            stdin: Optional alternative standard input stream.
+            stdout: Optional alternative standard output stream.
+            secret: Deprecated alias for keyfile.
+            **_kwargs: Additional arguments ignored for compatibility.
+        """
         super().__init__(stdin=stdin, stdout=stdout)
         self.host = host
         self.keyfile = keyfile or secret or DEFAULT_KEY
@@ -69,18 +88,22 @@ class TshRepl(cmd.Cmd):
         )
         self.update_prompt()
 
-    def preloop(self):
+    def preloop(self) -> None:
         """Initializes persistent session before entering REPL loop."""
         self.get_or_create_session()
 
-    def postloop(self):
-        """Terminates persistent session on exit."""
+    def postloop(self) -> None:
+        """Terminates persistent session upon exiting REPL loop."""
         if self.session is not None:
             self.session.quit()
             self.session = None
 
     def get_or_create_session(self):
-        """Returns active persistent session, reconnecting if disconnected."""
+        """Returns active persistent session, reconnecting if disconnected.
+
+        Returns:
+            PelSession | None: Active authenticated session, or None if connection fails.
+        """
         if self.session is None or self.session.sock is None:
             try:
                 self.session = self.client.open_session()
@@ -88,12 +111,19 @@ class TshRepl(cmd.Cmd):
                 self.session = None
         return self.session
 
-    def update_prompt(self):
+    def update_prompt(self) -> None:
         """Updates the command line prompt string with current remote directory."""
         self.prompt = f"tsh [{self.host}:{self.remote_cwd}]$ "
 
     def resolve_remote_path(self, path: str) -> str:
-        """Resolves relative or absolute remote path against current remote_cwd."""
+        """Resolves relative or absolute remote path against current remote_cwd.
+
+        Args:
+            path: Remote path string to resolve.
+
+        Returns:
+            str: Normalized absolute POSIX remote path.
+        """
         if not path:
             return self.remote_cwd
         if path.startswith("/"):
@@ -102,8 +132,16 @@ class TshRepl(cmd.Cmd):
             resolved = posixpath.normpath(posixpath.join(self.remote_cwd, path))
         return resolved
 
-    def run_tsh(self, *args, capture_output=True) -> TshResult:
-        """Executes a command via native TshClient over persistent session."""
+    def run_tsh(self, *args, capture_output: bool = True) -> TshResult:
+        """Executes a command via native TshClient over persistent session.
+
+        Args:
+            *args: Action verb and positional arguments.
+            capture_output: If True, captures stdout and stderr in TshResult.
+
+        Returns:
+            TshResult: Normalized command execution result.
+        """
         if not args:
             return TshResult(1, stderr="No command specified\n")
 
@@ -116,7 +154,14 @@ class TshRepl(cmd.Cmd):
         return res
 
     def check_dir_exists(self, remote_dir: str) -> bool:
-        """Validates that a remote directory exists by performing an ls query."""
+        """Validates that a remote directory exists by performing an ls query.
+
+        Args:
+            remote_dir: Remote directory path to probe.
+
+        Returns:
+            bool: True if the remote directory exists and is readable, False otherwise.
+        """
         res = self.run_tsh("ls", remote_dir)
         # Any valid directory listing will contain at least '.' and '..'
         return res.returncode == 0 and bool(res.stdout and res.stdout.strip())
@@ -306,7 +351,14 @@ class TshRepl(cmd.Cmd):
 
 
 def parse_args():
-    """Parses command-line arguments for tsh_client."""
+    """Parses command-line arguments for tsh_client.
+
+    Normalizes positional arguments if an action is specified without an
+    explicit host, defaulting host to 'localhost'.
+
+    Returns:
+        argparse.Namespace: Parsed and normalized command-line arguments.
+    """
     parser = argparse.ArgumentParser(
         description="tsh_client - Standalone Python client and interactive REPL for Tiny SHell."
     )
@@ -369,7 +421,11 @@ def parse_args():
 
 
 def main():
-    """Main entry point for tsh_client."""
+    """Main entry point for tsh_client.
+
+    Parses command-line arguments, executes single-shot commands if provided,
+    or launches the interactive TshRepl session.
+    """
     args = parse_args()
 
     # Single-shot CLI mode matching tsh

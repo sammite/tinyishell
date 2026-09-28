@@ -54,6 +54,14 @@ int tshd_ls_dir( int client );
 int tshd_execv( int client );
 
 /* Non-stdio string formatting helpers */
+
+/**
+ * \brief Appends a null-terminated string to a destination buffer.
+ *
+ * \param[out] dst Pointer to destination buffer where characters will be written.
+ * \param[in]  src Pointer to null-terminated source string to copy.
+ * \return Pointer to the position immediately following the last written character.
+ */
 static char *append_str( char *dst, const char *src )
 {
     while( *src != '\0' )
@@ -63,6 +71,15 @@ static char *append_str( char *dst, const char *src )
     return dst;
 }
 
+/**
+ * \brief Formats a 32-bit unsigned integer as a 6-character octal string.
+ *
+ * Used for formatting POSIX file permission mode bits without stdio.
+ *
+ * \param[out] dst Pointer to destination buffer of at least 6 bytes.
+ * \param[in]  val Unsigned integer mode value to format.
+ * \return Pointer to the buffer position immediately following the 6 octal digits.
+ */
 static char *append_octal6( char *dst, uint32_t val )
 {
     int i;
@@ -74,11 +91,19 @@ static char *append_octal6( char *dst, uint32_t val )
     return dst + 6;
 }
 
+/**
+ * \brief Formats a 64-bit unsigned integer as a base-10 ASCII string.
+ *
+ * Formats integers (e.g. UID, GID, file size) without relying on sprintf.
+ *
+ * \param[out] dst Pointer to destination buffer.
+ * \param[in]  val 64-bit unsigned integer value to format.
+ * \return Pointer to the buffer position immediately following the last written digit.
+ */
 static char *append_uint( char *dst, uint64_t val )
 {
     char tmp[24];
     int i = 0;
-
     if( val == 0 )
     {
         *dst++ = '0';
@@ -99,13 +124,29 @@ static char *append_uint( char *dst, uint64_t val )
     return dst;
 }
 
+/**
+ * \brief Signal handler for SIGTERM and SIGINT.
+ *
+ * Terminates the server process cleanly.
+ *
+ * \param[in] sig Signal number received.
+ */
 static void sigterm_handler( int sig )
 {
     (void) sig;
     exit( 0 );
 }
 
-/* Program entry point */
+/**
+ * \brief Server entry point for tshd.
+ *
+ * Parses command-line arguments, sets up signal handlers, daemonizes unless
+ * running in foreground, and enters either listening mode or connect-back loop.
+ *
+ * \param[in] argc Argument count.
+ * \param[in] argv Argument vector.
+ * \return 0 on normal exit, or non-zero error code on failure.
+ */
 int main( int argc, char *argv[] )
 {
     int ret, pid;
@@ -284,6 +325,17 @@ int main( int argc, char *argv[] )
     return( 0 );
 }
 
+/**
+ * \brief Handles an incoming client connection and session loop.
+ *
+ * Forks worker processes, performs the cryptographic PEL handshake using
+ * the server's embedded public key, configures socket timeouts and TCP_NODELAY,
+ * and executes a persistent command dispatch loop until the client disconnects
+ * or sends QUIT_SESSION.
+ *
+ * \param[in] client Connected client socket file descriptor.
+ * \return 0 on success, or non-zero status code on error.
+ */
 int process_client( int client )
 {
     int pid, ret, action;
@@ -398,6 +450,17 @@ int process_client( int client )
     return( 0 );
 }
 
+/**
+ * \brief Handles a file download request from the client.
+ *
+ * Receives the target file path via PEL, opens the file, streams its contents
+ * in chunks up to BUFSIZE, and terminates the transfer with a 0-byte frame.
+ * If the file cannot be opened or read, an empty 0-byte frame is sent to ensure
+ * protocol synchronization.
+ *
+ * \param[in] client Connected client socket file descriptor.
+ * \return 0 on success, or -1 on unrecoverable network/protocol error.
+ */
 int tshd_get_file( int client )
 {
     int ret, len, fd;
@@ -463,6 +526,16 @@ int tshd_get_file( int client )
     return( 0 );
 }
 
+/**
+ * \brief Handles a file upload request from the client.
+ *
+ * Receives the destination path via PEL, creates the target file, writes
+ * incoming data chunks until a 0-byte frame is received, and sends a 1-byte
+ * status response (0 for success, 1 for write/create failure).
+ *
+ * \param[in] client Connected client socket file descriptor.
+ * \return 0 on success, or -1 on unrecoverable network/protocol error.
+ */
 int tshd_put_file( int client )
 {
     int ret, len, fd;
@@ -534,6 +607,17 @@ int tshd_put_file( int client )
     return( 0 );
 }
 
+/**
+ * \brief Handles a directory listing request from the client.
+ *
+ * Receives the directory path via PEL, opens the directory, and iterates over
+ * directory entries using the raw SYS_getdents64 syscall. File metadata (mode,
+ * UID, GID, size, filename) is formatted into ASCII lines without stdio and
+ * sent to the client. A 0-byte frame signals the end of the listing.
+ *
+ * \param[in] client Connected client socket file descriptor.
+ * \return 0 on success, or -1 on unrecoverable network/protocol error.
+ */
 int tshd_ls_dir( int client )
 {
     int ret, len, dfd;
@@ -627,6 +711,16 @@ int tshd_ls_dir( int client )
     return( 0 );
 }
 
+/**
+ * \brief Handles an executable command execution request from the client.
+ *
+ * Receives the command string via PEL, tokenizes arguments in-place, forks
+ * a child process to execute the binary via execv, waits for termination, and
+ * transmits the child's exit status code (1 byte) back to the client.
+ *
+ * \param[in] client Connected client socket file descriptor.
+ * \return 0 on success, or -1 on unrecoverable network/protocol error.
+ */
 int tshd_execv( int client )
 {
     int ret, len, pid, status;

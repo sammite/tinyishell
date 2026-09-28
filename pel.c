@@ -36,8 +36,15 @@ static int pel_get_random(uint8_t *buf, size_t len);
 static int pel_send_all(int s, const void *buf, size_t len, int flags);
 static int pel_recv_all(int s, void *buf, size_t len, int flags);
 
-/*
- * Securely fill buffer with cryptographically secure random bytes.
+/**
+ * \brief Securely fills a buffer with cryptographically secure random bytes.
+ *
+ * Uses the SYS_getrandom syscall if available, falling back to reading from
+ * /dev/urandom.
+ *
+ * \param[out] buf Pointer to buffer to fill.
+ * \param[in]  len Number of bytes to generate.
+ * \return 0 on success, -1 on failure.
  */
 static int pel_get_random(uint8_t *buf, size_t len)
 {
@@ -70,8 +77,16 @@ static int pel_get_random(uint8_t *buf, size_t len)
     return -1;
 }
 
-/*
- * Reliable send loop for streaming sockets.
+/**
+ * \brief Reliable send loop ensuring all bytes are written to a stream socket.
+ *
+ * Handles partial socket sends in a loop.
+ *
+ * \param[in] s     Socket file descriptor.
+ * \param[in] buf   Pointer to buffer of bytes to send.
+ * \param[in] len   Total number of bytes to send.
+ * \param[in] flags Socket send flags (e.g. MSG_NOSIGNAL).
+ * \return PEL_SUCCESS on success, PEL_FAILURE on error (sets pel_errno).
  */
 static int pel_send_all(int s, const void *buf, size_t len, int flags)
 {
@@ -95,8 +110,16 @@ static int pel_send_all(int s, const void *buf, size_t len, int flags)
     return PEL_SUCCESS;
 }
 
-/*
- * Reliable receive loop for streaming sockets.
+/**
+ * \brief Reliable receive loop ensuring all expected bytes are read from a stream socket.
+ *
+ * Handles partial socket receives in a loop until the full buffer is filled.
+ *
+ * \param[in]  s     Socket file descriptor.
+ * \param[out] buf   Pointer to buffer to store received bytes.
+ * \param[in]  len   Total number of bytes expected.
+ * \param[in]  flags Socket recv flags.
+ * \return PEL_SUCCESS on success, PEL_FAILURE on connection close or error (sets pel_errno).
  */
 static int pel_recv_all(int s, void *buf, size_t len, int flags)
 {
@@ -125,13 +148,20 @@ static int pel_recv_all(int s, void *buf, size_t len, int flags)
     return PEL_SUCCESS;
 }
 
-/*
- * Client-side session handshake:
- * 1. Recv Msg1 from Server: s_epk (32B) || n_s (16B) = 48B
- * 2. Generate client ephemeral keypair (c_esk, c_epk)
- * 3. Sign transcript: s_epk (32B) || c_epk (32B) || n_s (16B) = 80B
- * 4. Send Msg2 to Server: c_epk (32B) || sig (64B) = 96B
+/**
+ * \brief Client-side session handshake.
+ *
+ * Protocol sequence:
+ * 1. Recv Msg 1 from Server: s_epk (32B) || n_s (16B) = 48B.
+ * 2. Generate client ephemeral keypair (c_esk, c_epk).
+ * 3. Sign transcript: s_epk (32B) || c_epk (32B) || n_s (16B) = 80B using developer Ed25519 seed.
+ * 4. Send Msg 2 to Server: c_epk (32B) || sig (64B) = 96B.
  * 5. Compute ECDH shared secret & derive directional ChaCha20-Poly1305 keys.
+ * 6. Receive & verify server confirmation (Msg 3, 16B).
+ *
+ * \param[in] server   Connected server socket descriptor.
+ * \param[in] dev_seed 32-byte Ed25519 developer private seed.
+ * \return PEL_SUCCESS on success, PEL_FAILURE on error.
  */
 int pel_client_init(int server, const uint8_t dev_seed[32])
 {
@@ -238,13 +268,20 @@ int pel_client_init(int server, const uint8_t dev_seed[32])
     return PEL_SUCCESS;
 }
 
-/*
- * Server-side session handshake:
- * 1. Generate server ephemeral keypair (s_esk, s_epk) and server nonce n_s
- * 2. Send Msg1 to Client: s_epk (32B) || n_s (16B) = 48B
- * 3. Recv Msg2 from Client: c_epk (32B) || sig (64B) = 96B
- * 4. Verify client Ed25519 signature against developer public key
+/**
+ * \brief Server-side session handshake.
+ *
+ * Protocol sequence:
+ * 1. Generate server ephemeral keypair (s_esk, s_epk) and server nonce n_s (16B).
+ * 2. Send Msg 1 to Client: s_epk (32B) || n_s (16B) = 48B.
+ * 3. Recv Msg 2 from Client: c_epk (32B) || sig (64B) = 96B.
+ * 4. Verify client Ed25519 signature against developer public key.
  * 5. Compute ECDH shared secret & derive directional ChaCha20-Poly1305 keys.
+ * 6. Send server confirmation (Msg 3, 16B).
+ *
+ * \param[in] client Connected client socket descriptor.
+ * \param[in] dev_pk 32-byte Ed25519 developer public key.
+ * \return PEL_SUCCESS on success, PEL_FAILURE on error.
  */
 int pel_server_init(int client, const uint8_t dev_pk[32])
 {
@@ -338,12 +375,18 @@ int pel_server_init(int client, const uint8_t dev_pk[32])
     return PEL_SUCCESS;
 }
 
-/*
- * Send an authenticated and encrypted message using ChaCha20-Poly1305 AEAD.
+/**
+ * \brief Sends an authenticated and encrypted message using ChaCha20-Poly1305 AEAD.
+ *
  * Wire format:
- * [0..1]   = length (big-endian 16-bit)
- * [2..17]  = Poly1305 MAC tag (16 bytes)
- * [18..]   = ChaCha20 ciphertext (length bytes)
+ * - [0..1]   = length (big-endian 16-bit)
+ * - [2..17]  = Poly1305 MAC tag (16 bytes)
+ * - [18..]   = ChaCha20 ciphertext (length bytes)
+ *
+ * \param[in] sockfd Socket file descriptor.
+ * \param[in] msg    Pointer to payload data buffer to encrypt and send.
+ * \param[in] length Number of bytes in payload (0 <= length <= BUFSIZE).
+ * \return PEL_SUCCESS on success, PEL_FAILURE on error.
  */
 int pel_send_msg(int sockfd, const unsigned char *msg, int length)
 {
@@ -389,8 +432,18 @@ int pel_send_msg(int sockfd, const unsigned char *msg, int length)
     return PEL_SUCCESS;
 }
 
-/*
- * Receive and decrypt an authenticated message using ChaCha20-Poly1305 AEAD.
+/**
+ * \brief Receives and decrypts an authenticated message using ChaCha20-Poly1305 AEAD.
+ *
+ * Wire format:
+ * - [0..1]   = length (big-endian 16-bit)
+ * - [2..17]  = Poly1305 MAC tag (16 bytes)
+ * - [18..]   = ChaCha20 ciphertext (length bytes)
+ *
+ * \param[in]  sockfd Socket file descriptor.
+ * \param[out] msg    Pointer to buffer to store decrypted plaintext.
+ * \param[out] length Pointer to integer storing the number of bytes decrypted.
+ * \return PEL_SUCCESS on success, PEL_FAILURE on error or MAC failure.
  */
 int pel_recv_msg(int sockfd, unsigned char *msg, int *length)
 {
