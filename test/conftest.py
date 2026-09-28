@@ -54,6 +54,13 @@ def build_tsh(request):
     if result.returncode != 0:
         pytest.fail(f"Build failed: {result.stderr}")
 
+    tsh_symlink = "./tsh"
+    if not os.path.exists(tsh_symlink):
+        try:
+            os.symlink("tsh_client.py", tsh_symlink)
+        except OSError:
+            pass
+
     return {
         "key_path": key_path,
         "secret": key_path,

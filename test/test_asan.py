@@ -58,15 +58,13 @@ def test_asan_pel_unit():
 
 
 def test_asan_client_transactions(tmp_path):
-    """Verify tsh client and daemon safety under AddressSanitizer during transactions."""
+    """Verify daemon safety under AddressSanitizer during transactions."""
     cflags = f"{ASAN_CFLAGS} -Wall -Wextra -DSERVER_PORT=8767"
-    build_client = f"gcc {cflags} -o tsh_asan pel.c monocypher.c monocypher-ed25519.c tsh.c"
     build_server = (
         f"gcc {cflags} -DLINUX -o tshd_asan pel.c monocypher.c monocypher-ed25519.c"
         " tshd.c -lutil"
     )
 
-    subprocess.run(build_client, shell=True, check=True)
     subprocess.run(build_server, shell=True, check=True)
 
     server_log_prefix = str(tmp_path / "asan_server.log")
@@ -87,15 +85,16 @@ def test_asan_client_transactions(tmp_path):
         time.sleep(0.5)
         try:
             # 1. tsh ls with ASan
-            cmd_ls = ["./tsh_asan", "-p", "8767", "127.0.0.1", "ls", str(tmp_path)]
+            cmd_ls = ["python3", "tsh_client.py", "-p", "8767", "127.0.0.1", "ls", str(tmp_path)]
             res_ls = subprocess.run(
-                cmd_ls, capture_output=True, text=True, check=False, env=ASAN_ENV
+                cmd_ls, capture_output=True, text=True, check=False
             )
             assert res_ls.returncode == 0, f"tsh ls failed:\n{res_ls.stderr}"
 
             # 2. tsh put with ASan
             cmd_put = [
-                "./tsh_asan",
+                "python3",
+                "tsh_client.py",
                 "-p",
                 "8767",
                 "127.0.0.1",
@@ -104,7 +103,7 @@ def test_asan_client_transactions(tmp_path):
                 str(rx_dir),
             ]
             res_put = subprocess.run(
-                cmd_put, capture_output=True, text=True, check=False, env=ASAN_ENV
+                cmd_put, capture_output=True, text=True, check=False
             )
             assert res_put.returncode == 0, f"tsh put failed:\n{res_put.stderr}"
 
@@ -113,7 +112,8 @@ def test_asan_client_transactions(tmp_path):
             get_dest_dir.mkdir()
             remote_put_file = rx_dir / "asan_payload.bin"
             cmd_get = [
-                "./tsh_asan",
+                "python3",
+                "tsh_client.py",
                 "-p",
                 "8767",
                 "127.0.0.1",
@@ -122,7 +122,7 @@ def test_asan_client_transactions(tmp_path):
                 str(get_dest_dir),
             ]
             res_get = subprocess.run(
-                cmd_get, capture_output=True, text=True, check=False, env=ASAN_ENV
+                cmd_get, capture_output=True, text=True, check=False
             )
             assert res_get.returncode == 0, f"tsh get failed:\n{res_get.stderr}"
 
@@ -132,7 +132,8 @@ def test_asan_client_transactions(tmp_path):
 
             # 4. tsh remote exec under ASan
             cmd_exec = [
-                "./tsh_asan",
+                "python3",
+                "tsh_client.py",
                 "-p",
                 "8767",
                 "127.0.0.1",
@@ -140,7 +141,7 @@ def test_asan_client_transactions(tmp_path):
                 "/usr/bin/true",
             ]
             res_exec = subprocess.run(
-                cmd_exec, capture_output=True, text=True, check=False, env=ASAN_ENV
+                cmd_exec, capture_output=True, text=True, check=False
             )
             assert res_exec.returncode == 0, f"tsh exec failed:\n{res_exec.stderr}"
             assert "Exit code: 0" in res_exec.stdout
@@ -161,4 +162,4 @@ def test_asan_client_transactions(tmp_path):
                 assert "ERROR: AddressSanitizer" not in content
                 assert "ERROR: LeakSanitizer" not in content
 
-            subprocess.run(["rm", "-f", "tsh_asan", "tshd_asan"], check=False)
+            subprocess.run(["rm", "-f", "tshd_asan"], check=False)

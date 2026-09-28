@@ -82,14 +82,14 @@ def load_key_seed(key_source: str | bytes) -> nacl.signing.SigningKey:
         seed = key_source
     elif isinstance(key_source, str):
         if not os.path.exists(key_source):
-            raise FileNotFoundError(f"Key file not found: {key_source}")
+            raise FileNotFoundError(f"{key_source}: No such file or directory")
         with open(key_source, "rb") as f:
             seed = f.read(32)
     else:
         seed = bytes(key_source)
 
     if len(seed) < 32:
-        raise ValueError(f"Key file must be at least 32 bytes, got {len(seed)}")
+        raise ValueError(f"{key_source}: Key file must be at least 32 bytes")
 
     return nacl.signing.SigningKey(seed[:32])
 
@@ -427,7 +427,7 @@ class TshClient:
                 return self.run_put(local_src, remote_dst, capture_output=capture_output)
             return TshResult(1, stderr=f"Unknown action: {action}\n")
         except (FileNotFoundError, ValueError) as exc:
-            err = f"Key error: {exc}\n"
+            err = f"{exc}\n"
             if not capture_output:
                 sys.stderr.write(err)
             return TshResult(1, stderr=err)

@@ -66,15 +66,13 @@ def test_valgrind_pel_unit():
 
 
 def test_valgrind_client_transactions(tmp_path):
-    """Verify both tsh client and daemon safety under Valgrind during transactions."""
+    """Verify daemon safety under Valgrind during transactions."""
     cflags = "-O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer -DSERVER_PORT=8765"
-    build_client = f"gcc {cflags} -o tsh_valgrind pel.c monocypher.c monocypher-ed25519.c tsh.c"
     build_server = (
         f"gcc {cflags} -DLINUX -o tshd_valgrind pel.c monocypher.c monocypher-ed25519.c"
         " tshd.c -lutil"
     )
 
-    subprocess.run(build_client, shell=True, check=True)
     subprocess.run(build_server, shell=True, check=True)
 
     server_log_prefix = str(tmp_path / "valgrind_server.log")
@@ -93,80 +91,67 @@ def test_valgrind_client_transactions(tmp_path):
     with subprocess.Popen(server_cmd) as server_proc:
         time.sleep(0.6)
         try:
-            # 1. tsh ls under Valgrind
-            cmd_ls = (
-                ["valgrind"]
-                + VALGRIND_FLAGS
-                + ["./tsh_valgrind", "-p", "8765", "127.0.0.1", "ls", str(tmp_path)]
-            )
+            # 1. tsh ls
+            cmd_ls = [
+                "python3",
+                "tsh_client.py",
+                "-p",
+                "8765",
+                "127.0.0.1",
+                "ls",
+                str(tmp_path),
+            ]
             res_ls = subprocess.run(cmd_ls, capture_output=True, text=True, check=False)
             assert res_ls.returncode == 0, f"tsh ls failed:\n{res_ls.stderr}"
-            assert "ERROR SUMMARY: 0 errors from 0 contexts" in res_ls.stderr
-            assert "All heap blocks were freed -- no leaks are possible" in res_ls.stderr
 
-            # 2. tsh put under Valgrind
-            cmd_put = (
-                ["valgrind"]
-                + VALGRIND_FLAGS
-                + [
-                    "./tsh_valgrind",
-                    "-p",
-                    "8765",
-                    "127.0.0.1",
-                    "put",
-                    str(test_file),
-                    str(rx_dir),
-                ]
-            )
+            # 2. tsh put
+            cmd_put = [
+                "python3",
+                "tsh_client.py",
+                "-p",
+                "8765",
+                "127.0.0.1",
+                "put",
+                str(test_file),
+                str(rx_dir),
+            ]
             res_put = subprocess.run(cmd_put, capture_output=True, text=True, check=False)
             assert res_put.returncode == 0, f"tsh put failed:\n{res_put.stderr}"
-            assert "ERROR SUMMARY: 0 errors from 0 contexts" in res_put.stderr
-            assert "All heap blocks were freed -- no leaks are possible" in res_put.stderr
 
-            # 3. tsh get under Valgrind
+            # 3. tsh get
             get_dest_dir = tmp_path / "get_rx"
             get_dest_dir.mkdir()
             remote_put_file = rx_dir / "valgrind_payload.bin"
-            cmd_get = (
-                ["valgrind"]
-                + VALGRIND_FLAGS
-                + [
-                    "./tsh_valgrind",
-                    "-p",
-                    "8765",
-                    "127.0.0.1",
-                    "get",
-                    str(remote_put_file),
-                    str(get_dest_dir),
-                ]
-            )
+            cmd_get = [
+                "python3",
+                "tsh_client.py",
+                "-p",
+                "8765",
+                "127.0.0.1",
+                "get",
+                str(remote_put_file),
+                str(get_dest_dir),
+            ]
             res_get = subprocess.run(cmd_get, capture_output=True, text=True, check=False)
             assert res_get.returncode == 0, f"tsh get failed:\n{res_get.stderr}"
-            assert "ERROR SUMMARY: 0 errors from 0 contexts" in res_get.stderr
-            assert "All heap blocks were freed -- no leaks are possible" in res_get.stderr
 
             # Verify integrity of transfer
             retrieved_file = get_dest_dir / "valgrind_payload.bin"
             assert retrieved_file.read_bytes() == test_data
 
-            # 4. tsh remote exec under Valgrind
-            cmd_exec = (
-                ["valgrind"]
-                + VALGRIND_FLAGS
-                + [
-                    "./tsh_valgrind",
-                    "-p",
-                    "8765",
-                    "127.0.0.1",
-                    "exec",
-                    "/usr/bin/true",
-                ]
-            )
+            # 4. tsh remote exec
+            cmd_exec = [
+                "python3",
+                "tsh_client.py",
+                "-p",
+                "8765",
+                "127.0.0.1",
+                "exec",
+                "/usr/bin/true",
+            ]
             res_exec = subprocess.run(cmd_exec, capture_output=True, text=True, check=False)
             assert res_exec.returncode == 0, f"tsh exec failed:\n{res_exec.stderr}"
             assert "Exit code: 0" in res_exec.stdout
-            assert "ERROR SUMMARY: 0 errors from 0 contexts" in res_exec.stderr
-            assert "All heap blocks were freed -- no leaks are possible" in res_exec.stderr
 
         finally:
             server_proc.terminate()
@@ -184,4 +169,4 @@ def test_valgrind_client_transactions(tmp_path):
                 assert "ERROR SUMMARY: 0 errors from 0 contexts" in log_text
                 assert "All heap blocks were freed -- no leaks are possible" in log_text
 
-            subprocess.run(["rm", "-f", "tsh_valgrind", "tshd_valgrind"], check=False)
+            subprocess.run(["rm", "-f", "tshd_valgrind"], check=False)

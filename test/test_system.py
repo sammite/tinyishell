@@ -31,7 +31,8 @@ def build_custom_tsh(target, key_path, port, cb_mode=False, cb_host=None):
     tsh_path = f"./tsh{suffix}"
     tshd_path = f"./tshd{suffix}"
 
-    shutil.move("./tsh", tsh_path)
+    shutil.copy("./tsh_client.py", tsh_path)
+    os.chmod(tsh_path, 0o755)
     shutil.move("./tshd", tshd_path)
 
     return os.path.abspath(tsh_path), os.path.abspath(tshd_path)

@@ -47,7 +47,6 @@ $(info [DEBUG] Building with DEBUG enabled)
 endif
 
 VERSION=tsh-0.7
-CLIENT_OBJ=pel.c monocypher.c monocypher-ed25519.c  tsh.c
 SERVER_OBJ=pel.c monocypher.c monocypher-ed25519.c tshd.c
 
 DISTFILES= \
@@ -58,7 +57,9 @@ DISTFILES= \
     pel.h \
     Makefile \
     tsh.h\
-    $(CLIENT_OBJ) $(SERVER_OBJ)
+    tsh_client.py\
+    tsh_pel.py\
+    $(SERVER_OBJ)
 
 VALGRIND_FLAGS	= --leak-check=full --show-leak-kinds=all --track-origins=yes --error-exitcode=1 --errors-for-leak-kinds=all --trace-children=yes
 
@@ -106,33 +107,34 @@ darwin:
 		CC="clang"						\
 		LDFLAGS="$(LDFLAGS) -lutil"				\
 		DEFS="$(DEFS) -DOPENBSD"				\
-		$(TSH) $(TSHD)
+		$(TSHD)
+	ln -sf tsh_client.py $(TSH)
 
 iphone:
 	$(MAKE)								\
 		CFLAGS="$(CFLAGS) -I$(TOOLCHAIN)/usr/include"		\
 		LDFLAGS="$(LDFLAGS) -L$(TOOLCHAIN)/usr/lib -lutil"	\
 		DEFS="$(DEFS) -DOPENBSD"				\
-		$(TSH) $(TSHD)
-	ldid -S $(TSH)
+		$(TSHD)
 	ldid -S $(TSHD)
+	ln -sf tsh_client.py $(TSH)
 
 linux: $(PUBKEY_HEADER)
-	$(CC) $(CFLAGS) $(DEFS) $(LDFLAGS) -o tsh  $(CLIENT_OBJ)
 	$(CC) $(CFLAGS) $(DEFS) $(LDFLAGS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
-	$(STRIP) tsh tshd
+	$(STRIP) tshd
+	ln -sf tsh_client.py $(TSH)
 
 linux_valgrind: $(PUBKEY_HEADER)
-	$(CC) -O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -o tsh  $(CLIENT_OBJ)
 	$(CC) -O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
+	ln -sf tsh_client.py $(TSH)
 
 linux_asan: $(PUBKEY_HEADER)
-	$(CC) -fsanitize=address -g -O1 -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -o tsh  $(CLIENT_OBJ)
 	$(CC) -fsanitize=address -g -O1 -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
+	ln -sf tsh_client.py $(TSH)
 
 analyze:
 	@echo "--- Running GCC static analyzer (-fanalyzer) ---"
-	$(CC) -I. -fanalyzer -Wall -Wextra -c pel.c tsh.c tshd.c
+	$(CC) -I. -fanalyzer -Wall -Wextra -c pel.c tshd.c
 	@rm -f *.o
 	@if [ -d "tshvenv" ]; then \
 		echo "--- Running CodeChecker static analysis ---"; \
@@ -145,8 +147,8 @@ analyze:
 
 valgrind: $(PUBKEY_HEADER)
 	@echo "--- Building dynamic glibc binaries with debug symbols ---"
-	$(CC) -O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -o tsh $(CLIENT_OBJ)
 	$(CC) -O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
+	ln -sf tsh_client.py $(TSH)
 	$(CC) -O1 -g -fno-inline -Wall -Wextra -fno-omit-frame-pointer -I. test/test_pel_unit.c pel.c monocypher.c monocypher-ed25519.c -o test/test_pel_unit
 	@echo "--- Running Valgrind on PEL cryptographic unit tests ---"
 	valgrind $(VALGRIND_FLAGS) ./test/test_pel_unit
@@ -157,8 +159,8 @@ valgrind: $(PUBKEY_HEADER)
 
 asan: $(PUBKEY_HEADER)
 	@echo "--- Building AddressSanitizer binaries ---"
-	$(CC) -fsanitize=address -g -O1 -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -o tsh $(CLIENT_OBJ)
 	$(CC) -fsanitize=address -g -O1 -Wall -Wextra -fno-omit-frame-pointer $(DEFS) -DLINUX -o tshd $(SERVER_OBJ) -lutil
+	ln -sf tsh_client.py $(TSH)
 	$(CC) -fsanitize=address -g -O1 -Wall -Wextra -fno-omit-frame-pointer -I. test/test_pel_unit.c pel.c monocypher.c monocypher-ed25519.c -o test/test_pel_unit_asan
 	@echo "--- Running AddressSanitizer on PEL cryptographic unit tests ---"
 	ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1" ./test/test_pel_unit_asan
@@ -171,8 +173,8 @@ asan: $(PUBKEY_HEADER)
 ubsan: $(PUBKEY_HEADER)
 	@echo "--- Building UndefinedBehaviorSanitizer binaries ---"
 	$(CC) -O2 -c monocypher.c monocypher-ed25519.c
-	$(CC) -fsanitize=undefined -g -O1 -Wall -Wextra $(DEFS) -o tsh pel.c tsh.c monocypher.o monocypher-ed25519.o
 	$(CC) -fsanitize=undefined -g -O1 -Wall -Wextra $(DEFS) -DLINUX -o tshd pel.c tshd.c monocypher.o monocypher-ed25519.o -lutil
+	ln -sf tsh_client.py $(TSH)
 	$(CC) -fsanitize=undefined -g -O1 -Wall -Wextra -I. test/test_pel_unit.c pel.c monocypher.o monocypher-ed25519.o -o test/test_pel_unit_ubsan
 	@echo "--- Running UndefinedBehaviorSanitizer on PEL cryptographic unit tests ---"
 	UBSAN_OPTIONS="halt_on_error=1:abort_on_error=1:print_stacktrace=1" ./test/test_pel_unit_ubsan
@@ -186,10 +188,10 @@ linux_musl:
 	$(MAKE) CC="musl-gcc" STRIP="$(STRIP)" linux_musl_generic
 
 linux_musl_generic: $(PUBKEY_HEADER)
-	$(RM) $(TSH) $(TSHD)
-	$(CC) $(CFLAGS) -static $(DEFS) $(LDFLAGS) -static -o $(TSH) $(CLIENT_OBJ)
+	$(RM) $(TSHD)
 	$(CC) $(CFLAGS) -static $(DEFS) $(LDFLAGS) -static -DLINUX -o $(TSHD) $(SERVER_OBJ)
-	$(STRIP) $(TSH) $(TSHD)
+	$(STRIP) $(TSHD)
+	ln -sf tsh_client.py $(TSH)
 
 linux_arm_musl:
 	@if [ -x "$(ARM_CROSS)gcc" ]; then \
@@ -296,31 +298,31 @@ cross_all:
 		  $(DIST_DIR)/mips64 $(DIST_DIR)/mips64el
 	@echo "--- Building static musl ARM (arm-linux-musleabi) ---"
 	$(MAKE) linux_arm_musl
-	@cp $(TSH) $(TSHD) $(DIST_DIR)/arm/
+	@cp $(TSHD) $(DIST_DIR)/arm/
 	@echo "--- Building static musl AArch64 (aarch64-linux-musl) ---"
 	$(MAKE) linux_arm64_musl
-	@cp $(TSH) $(TSHD) $(DIST_DIR)/arm64/
+	@cp $(TSHD) $(DIST_DIR)/arm64/
 	@echo "--- Building static musl MIPS (mips-linux-musl) ---"
 	$(MAKE) linux_mips_musl
-	@cp $(TSH) $(TSHD) $(DIST_DIR)/mips/
+	@cp $(TSHD) $(DIST_DIR)/mips/
 	@echo "--- Building static musl MIPSEL (mipsel-linux-musl) ---"
 	$(MAKE) linux_mipsel_musl
-	@cp $(TSH) $(TSHD) $(DIST_DIR)/mipsel/
+	@cp $(TSHD) $(DIST_DIR)/mipsel/
 	@echo "--- Building static musl RISC-V 64 (riscv64-linux-musl) ---"
 	$(MAKE) linux_riscv64_musl
-	@cp $(TSH) $(TSHD) $(DIST_DIR)/riscv64/
+	@cp $(TSHD) $(DIST_DIR)/riscv64/
 	@echo "--- Building static musl RISC-V 32 (riscv32-linux-musl) ---"
 	$(MAKE) linux_riscv32_musl
-	@cp $(TSH) $(TSHD) $(DIST_DIR)/riscv32/
+	@cp $(TSHD) $(DIST_DIR)/riscv32/
 	@echo "--- Building static musl PowerPC (powerpc-linux-musl) ---"
 	$(MAKE) linux_powerpc_musl
-	@cp $(TSH) $(TSHD) $(DIST_DIR)/powerpc/
+	@cp $(TSHD) $(DIST_DIR)/powerpc/
 	@echo "--- Building static musl MIPS64 (mips64-linux-musl) ---"
 	$(MAKE) linux_mips64_musl
-	@cp $(TSH) $(TSHD) $(DIST_DIR)/mips64/
+	@cp $(TSHD) $(DIST_DIR)/mips64/
 	@echo "--- Building static musl MIPS64EL (mips64el-linux-musl) ---"
 	$(MAKE) linux_mips64el_musl
-	@cp $(TSH) $(TSHD) $(DIST_DIR)/mips64el/
+	@cp $(TSHD) $(DIST_DIR)/mips64el/
 	@echo "--- Cross-compilation complete! Binaries in $(DIST_DIR)/ ---"
 	@ls -lh $(DIST_DIR)/*/*
 
@@ -331,19 +333,22 @@ linux_x64:
 	$(MAKE)								\
 		LDFLAGS="$(LDFLAGS) -Xlinker --no-as-needed -lutil"	\
 		DEFS="$(DEFS) -DLINUX"					\
-		$(TSH) $(TSHD)
+		$(TSHD)
+	ln -sf tsh_client.py $(TSH)
 
 openbsd:
 	$(MAKE)								\
 		LDFLAGS="$(LDFLAGS) -lutil"				\
 		DEFS="$(DEFS) -DOPENBSD"				\
-		$(TSH) $(TSHD)
+		$(TSHD)
+	ln -sf tsh_client.py $(TSH)
 
 freebsd:
 	$(MAKE)								\
 		LDFLAGS="$(LDFLAGS) -lutil"				\
 		DEFS="$(DEFS) -DFREEBSD"				\
-		$(TSH) $(TSHD)
+		$(TSHD)
+	ln -sf tsh_client.py $(TSH)
 
 netbsd: openbsd
 
@@ -351,37 +356,41 @@ sunos:
 	$(MAKE)								\
 		LDFLAGS="$(LDFLAGS) -lsocket -lnsl"			\
 		DEFS="$(DEFS) -DSUNOS"					\
-		$(TSH) $(TSHD)
+		$(TSHD)
+	ln -sf tsh_client.py $(TSH)
 
 cygwin:
 	$(MAKE)								\
 		DEFS="$(DEFS) -DCYGWIN"					\
-		$(TSH) $(TSHD)
+		$(TSHD)
+	ln -sf tsh_client.py $(TSH)
 
 irix:
 	$(MAKE)								\
 		CC="cc"							\
 		CFLAGS="-O"						\
 		DEFS="$(DEFS) -DIRIX"					\
-		$(TSH) $(TSHD)
+		$(TSHD)
+	ln -sf tsh_client.py $(TSH)
 
 hpux:
 	$(MAKE)								\
 		CC="cc"							\
 		CFLAGS="-O"						\
 		DEFS="$(DEFS) -DHPUX"					\
-		$(TSH) $(TSHD)
+		$(TSHD)
+	ln -sf tsh_client.py $(TSH)
 
 osf:
 	$(MAKE)								\
 		CC="cc"							\
 		CFLAGS="-O"						\
 		DEFS="$(DEFS) -DOSF"					\
-		$(TSH) $(TSHD)
+		$(TSHD)
+	ln -sf tsh_client.py $(TSH)
 
-$(TSH): $(COMM) tsh.o
-	$(CC) ${LDFLAGS} -o $(TSH) $(COMM) tsh.o
-	$(STRIP) $(TSH)
+$(TSH):
+	ln -sf tsh_client.py $(TSH)
 
 $(TSHD): $(PUBKEY_HEADER) $(COMM) tshd.o
 	$(CC) ${LDFLAGS} -o $(TSHD) $(COMM) tshd.o
@@ -390,7 +399,6 @@ $(TSHD): $(PUBKEY_HEADER) $(COMM) tshd.o
 monocypher.o: monocypher.h
 monocypher-ed25519.o: monocypher-ed25519.h monocypher.h
 pel.o: monocypher.h monocypher-ed25519.h pel.h
-tsh.o: pel.h tsh.h
 tshd.o: pel.h tsh.h $(PUBKEY_HEADER)
 
 $(PUBKEY_HEADER):

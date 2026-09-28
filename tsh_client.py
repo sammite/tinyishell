@@ -12,7 +12,6 @@ import cmd
 import os
 import posixpath
 import shlex
-import subprocess
 import sys
 
 from tsh_pel import TshClient, TshResult
@@ -24,7 +23,6 @@ except ImportError:
 
 DEFAULT_KEY = os.environ.get("TSH_KEY", "./tsh_key")
 DEFAULT_PORT = 1234
-DEFAULT_TSH_BIN = "./tsh"
 DEFAULT_REMOTE_CWD = "/"
 
 
@@ -47,19 +45,16 @@ class TshRepl(cmd.Cmd):
         host="localhost",
         keyfile=None,
         port=DEFAULT_PORT,
-        tsh_bin=DEFAULT_TSH_BIN,
         initial_dir=DEFAULT_REMOTE_CWD,
         stdin=None,
         stdout=None,
-        use_c_bin=False,
         secret=None,
+        **_kwargs,
     ):
         super().__init__(stdin=stdin, stdout=stdout)
         self.host = host
         self.keyfile = keyfile or secret or DEFAULT_KEY
         self.port = port
-        self.tsh_bin = tsh_bin
-        self.use_c_bin = use_c_bin
 
         self.remote_cwd = posixpath.normpath(initial_dir) if initial_dir else DEFAULT_REMOTE_CWD
         if not self.remote_cwd.startswith("/"):
@@ -87,20 +82,8 @@ class TshRepl(cmd.Cmd):
             resolved = posixpath.normpath(posixpath.join(self.remote_cwd, path))
         return resolved
 
-    def run_tsh(self, *args, capture_output=True) -> TshResult | subprocess.CompletedProcess:
-        """Executes a command via native TshClient or optional C tsh binary fallback."""
-        if self.use_c_bin:
-            cmd_args = [
-                self.tsh_bin,
-                "-k",
-                str(self.keyfile),
-                "-p",
-                str(self.port),
-                self.host,
-                *args,
-            ]
-            return subprocess.run(cmd_args, capture_output=capture_output, text=True, check=False)
-
+    def run_tsh(self, *args, capture_output=True) -> TshResult:
+        """Executes a command via native TshClient."""
         if not args:
             return TshResult(1, stderr="No command specified\n")
 
@@ -329,16 +312,6 @@ def parse_args():
         default=DEFAULT_REMOTE_CWD,
         help="Initial remote working directory",
     )
-    parser.add_argument(
-        "--tsh-bin",
-        default=DEFAULT_TSH_BIN,
-        help="Path to tsh binary (for backward compatibility with --use-c-bin)",
-    )
-    parser.add_argument(
-        "--use-c-bin",
-        action="store_true",
-        help="Force execution through the C tsh binary rather than native Python engine",
-    )
     parser.add_argument("-c", "--command", help="Execute single REPL command string and exit")
     parser.add_argument(
         "-v",
@@ -381,9 +354,7 @@ def main():
         host=args.host,
         keyfile=args.key,
         port=args.port,
-        tsh_bin=args.tsh_bin,
         initial_dir=args.dir,
-        use_c_bin=args.use_c_bin,
     )
 
     if args.command:

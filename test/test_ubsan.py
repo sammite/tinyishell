@@ -61,16 +61,14 @@ def test_ubsan_pel_unit():
 
 
 def test_ubsan_client_transactions(tmp_path):
-    """Verify tsh client and daemon safety under UBSan during transactions."""
+    """Verify daemon safety under UBSan during transactions."""
     build_mono = "gcc -O2 -c monocypher.c monocypher-ed25519.c"
     cflags = "-fsanitize=undefined -g -O1 -Wall -Wextra -DSERVER_PORT=8769"
-    build_client = f"gcc {cflags} -o tsh_ubsan pel.c tsh.c monocypher.o monocypher-ed25519.o"
     build_server = (
         f"gcc {cflags} -DLINUX -o tshd_ubsan pel.c tshd.c monocypher.o monocypher-ed25519.o -lutil"
     )
 
     subprocess.run(build_mono, shell=True, check=True)
-    subprocess.run(build_client, shell=True, check=True)
     subprocess.run(build_server, shell=True, check=True)
 
     test_file = tmp_path / "ubsan_payload.bin"
@@ -83,15 +81,24 @@ def test_ubsan_client_transactions(tmp_path):
         time.sleep(0.5)
         try:
             # 1. tsh ls with UBSan
-            cmd_ls = ["./tsh_ubsan", "-p", "8769", "127.0.0.1", "ls", str(tmp_path)]
+            cmd_ls = [
+                "python3",
+                "tsh_client.py",
+                "-p",
+                "8769",
+                "127.0.0.1",
+                "ls",
+                str(tmp_path),
+            ]
             res_ls = subprocess.run(
-                cmd_ls, capture_output=True, text=True, check=False, env=UBSAN_ENV
+                cmd_ls, capture_output=True, text=True, check=False
             )
             assert res_ls.returncode == 0, f"tsh ls failed:\n{res_ls.stderr}"
 
             # 2. tsh put with UBSan
             cmd_put = [
-                "./tsh_ubsan",
+                "python3",
+                "tsh_client.py",
                 "-p",
                 "8769",
                 "127.0.0.1",
@@ -100,7 +107,7 @@ def test_ubsan_client_transactions(tmp_path):
                 str(rx_dir),
             ]
             res_put = subprocess.run(
-                cmd_put, capture_output=True, text=True, check=False, env=UBSAN_ENV
+                cmd_put, capture_output=True, text=True, check=False
             )
             assert res_put.returncode == 0, f"tsh put failed:\n{res_put.stderr}"
 
@@ -109,7 +116,8 @@ def test_ubsan_client_transactions(tmp_path):
             get_dest_dir.mkdir()
             remote_put_file = rx_dir / "ubsan_payload.bin"
             cmd_get = [
-                "./tsh_ubsan",
+                "python3",
+                "tsh_client.py",
                 "-p",
                 "8769",
                 "127.0.0.1",
@@ -118,7 +126,7 @@ def test_ubsan_client_transactions(tmp_path):
                 str(get_dest_dir),
             ]
             res_get = subprocess.run(
-                cmd_get, capture_output=True, text=True, check=False, env=UBSAN_ENV
+                cmd_get, capture_output=True, text=True, check=False
             )
             assert res_get.returncode == 0, f"tsh get failed:\n{res_get.stderr}"
 
@@ -127,7 +135,8 @@ def test_ubsan_client_transactions(tmp_path):
 
             # 4. tsh remote exec with UBSan
             cmd_exec = [
-                "./tsh_ubsan",
+                "python3",
+                "tsh_client.py",
                 "-p",
                 "8769",
                 "127.0.0.1",
@@ -135,7 +144,7 @@ def test_ubsan_client_transactions(tmp_path):
                 "/usr/bin/true",
             ]
             res_exec = subprocess.run(
-                cmd_exec, capture_output=True, text=True, check=False, env=UBSAN_ENV
+                cmd_exec, capture_output=True, text=True, check=False
             )
             assert res_exec.returncode == 0, f"tsh exec failed:\n{res_exec.stderr}"
             assert "Exit code: 0" in res_exec.stdout
@@ -154,7 +163,6 @@ def test_ubsan_client_transactions(tmp_path):
                 [
                     "rm",
                     "-f",
-                    "tsh_ubsan",
                     "tshd_ubsan",
                     "monocypher.o",
                     "monocypher-ed25519.o",

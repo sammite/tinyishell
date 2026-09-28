@@ -30,21 +30,23 @@
 
     * How to use the client
 
-        Make sure tshd is running on the remote host. You can:
+        Make sure tshd is running on the remote host. The client is implemented in
+        Python (`tsh_client.py`), and a convenience symlink `./tsh -> tsh_client.py`
+        is provided. You can:
 
         - start an interactive shell session (with remote directory tracking):
 
-            ./tsh_client.py [ -s secret ] [ -p port ] <hostname|cb>
+            ./tsh_client.py [ -k keyfile ] [ -p port ] <hostname|cb>
 
         - execute a single remote command or query:
 
-            ./tsh [ -s secret ] [ -p port ] <hostname|cb> exec <remote-command>
-            ./tsh [ -s secret ] [ -p port ] <hostname|cb> ls <remote-dir>
+            ./tsh [ -k keyfile ] [ -p port ] <hostname|cb> exec <remote-command>
+            ./tsh [ -k keyfile ] [ -p port ] <hostname|cb> ls <remote-dir>
 
         - transfer files:
 
-            ./tsh [ -s secret ] [ -p port ] <hostname|cb> get <source-file> <dest-dir>
-            ./tsh [ -s secret ] [ -p port ] <hostname|cb> put <source-file> <dest-dir>
+            ./tsh [ -k keyfile ] [ -p port ] <hostname|cb> get <source-file> <dest-dir>
+            ./tsh [ -k keyfile ] [ -p port ] <hostname|cb> put <source-file> <dest-dir>
 
         Note: if the server runs in connect-back mode, replace
         the remote machine hostname with "cb".
