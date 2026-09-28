@@ -2,7 +2,7 @@ CROSS_COMPILE	?=
 CC		= $(CROSS_COMPILE)gcc
 RM		= rm -f
 STRIP		= $(CROSS_COMPILE)strip
-CFLAGS		= -Os -Wall -Wextra -ffunction-sections -fdata-sections -fno-asynchronous-unwind-tables -fno-unwind-tables -flto
+CFLAGS		= -Os -Wall -Wextra -ffunction-sections -fdata-sections -fno-asynchronous-unwind-tables -fno-unwind-tables -fstack-usage -flto
 LDFLAGS		+= -Wl,--gc-sections -Wl,--build-id=none -flto
 
 TOOLCHAIN_DIR	?= .toolchains
@@ -415,7 +415,7 @@ rekey:
 	$(CC) ${CFLAGS} ${DEFS} -c $*.c
 
 clean:
-	$(RM) $(TSH) $(TSHD) test/test_pel_unit test/test_pel_unit_* *.o test/*.o core compile_commands.json
+	$(RM) $(TSH) $(TSHD) test/test_pel_unit test/test_pel_unit_* *.o test/*.o *.su test/*.su core compile_commands.json
 	rm -rf codechecker_reports $(DIST_DIR) build
 
 

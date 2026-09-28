@@ -478,9 +478,14 @@ int tshd_get_file( int client )
 
     fd = open( (char *) message, O_RDONLY );
 
-    if( fd < 0 )
+    struct stat st;
+    if( fd < 0 || fstat( fd, &st ) < 0 || S_ISDIR( st.st_mode ) )
     {
-        /* Status 1: file open error, followed by 0-byte delimiter */
+        if( fd >= 0 )
+        {
+            close( fd );
+        }
+        /* Status 1: file open error or directory, followed by 0-byte delimiter */
         status = 1;
         pel_send_msg( client, &status, 1 );
         pel_send_msg( client, (unsigned char *) "", 0 );

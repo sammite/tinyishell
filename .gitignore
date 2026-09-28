@@ -17,3 +17,4 @@ dist/
 build/
 tsh_key*
 tsh_pubkey.h
+*.su
