@@ -60,6 +60,7 @@ class TshRepl(cmd.Cmd):
         if not self.remote_cwd.startswith("/"):
             self.remote_cwd = "/" + self.remote_cwd
         self.last_exit_code = 0
+        self.session = None
 
         self.client = TshClient(
             host=self.host,
@@ -67,6 +68,25 @@ class TshRepl(cmd.Cmd):
             keyfile=self.keyfile,
         )
         self.update_prompt()
+
+    def preloop(self):
+        """Initializes persistent session before entering REPL loop."""
+        self.get_or_create_session()
+
+    def postloop(self):
+        """Terminates persistent session on exit."""
+        if self.session is not None:
+            self.session.quit()
+            self.session = None
+
+    def get_or_create_session(self):
+        """Returns active persistent session, reconnecting if disconnected."""
+        if self.session is None or self.session.sock is None:
+            try:
+                self.session = self.client.open_session()
+            except Exception:
+                self.session = None
+        return self.session
 
     def update_prompt(self):
         """Updates the command line prompt string with current remote directory."""
@@ -83,13 +103,17 @@ class TshRepl(cmd.Cmd):
         return resolved
 
     def run_tsh(self, *args, capture_output=True) -> TshResult:
-        """Executes a command via native TshClient."""
+        """Executes a command via native TshClient over persistent session."""
         if not args:
             return TshResult(1, stderr="No command specified\n")
 
         action = args[0]
         action_args = args[1:]
-        return self.client.execute(action, *action_args, capture_output=capture_output)
+        session = self.get_or_create_session()
+        res = self.client.execute(action, *action_args, capture_output=capture_output, session=session)
+        if res.returncode == 4 and self.session is not None:
+            self.session = None
+        return res
 
     def check_dir_exists(self, remote_dir: str) -> bool:
         """Validates that a remote directory exists by performing an ls query."""
@@ -368,12 +392,14 @@ def main():
 
     if args.command:
         repl.onecmd(args.command)
+        repl.postloop()
         sys.exit(repl.last_exit_code)
     else:
         try:
             repl.cmdloop()
             sys.exit(repl.last_exit_code)
         except KeyboardInterrupt:
+            repl.postloop()
             print("\nExiting.")
             sys.exit(0)
 

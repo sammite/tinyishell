@@ -18,9 +18,10 @@ extern int server_port;
 #define CONNECT_BACK_HOST  "localhost"
 #define CONNECT_BACK_DELAY 5
 
-#define GET_FILE 1
-#define PUT_FILE 2
-#define LS_DIR   4
-#define EXEC_BIN 5
+#define GET_FILE     1
+#define PUT_FILE     2
+#define LS_DIR       4
+#define EXEC_BIN     5
+#define QUIT_SESSION 6
 
 #endif /* _TSH_H */

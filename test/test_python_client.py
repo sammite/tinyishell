@@ -4,7 +4,7 @@ import hashlib
 import os
 import subprocess
 
-from tsh_pel import load_key_seed
+from tsh_pel import TshClient, load_key_seed
 
 
 def get_sha256(path: str) -> str:
@@ -207,3 +207,68 @@ def test_python_client_raw_key_seed_derivation(tmp_path):
 
     signing_key = load_key_seed(str(key_file))
     assert bytes(signing_key) == seed_bytes
+
+
+def test_persistent_session_multi_command(tshd_daemon, tmp_path):
+    """Verify that multiple operations execute over a single persistent session."""
+    config = tshd_daemon
+    client = TshClient(
+        host="localhost",
+        port=config["port"],
+        keyfile=config["key_path"],
+    )
+
+    # Run 10 sequential operations within one connection session
+    with client.session() as sess:
+        # 1. ls root
+        res1 = client.run_ls("/", capture_output=True, session=sess)
+        assert res1.returncode == 0
+        assert "bin" in res1.stdout or "etc" in res1.stdout
+
+        # 2. exec echo
+        res2 = client.run_exec("/usr/bin/true", capture_output=True, session=sess)
+        assert res2.returncode == 0
+
+        # 3. put a file
+        local_file = tmp_path / "session_file.txt"
+        local_file.write_text("session content\n")
+        res3 = client.run_put(str(local_file), "/var/tmp", capture_output=True, session=sess)
+        assert res3.returncode == 0
+
+        # 4. read file bytes back
+        data = client.read_file_bytes("/var/tmp/session_file.txt", session=sess)
+        assert data == b"session content\n"
+
+        # 5. cleanup file
+        res5 = client.run_exec("/bin/rm -f /var/tmp/session_file.txt", capture_output=True, session=sess)
+        assert res5.returncode == 0
+
+        # 6. run ps
+        res6 = client.run_ps(capture_output=True, session=sess)
+        assert res6.returncode == 0
+        assert "PID" in res6.stdout and "COMMAND" in res6.stdout
+
+
+def test_persistent_session_error_lockstep(tshd_daemon):
+    """Verify non-existent paths return 0-byte frames and do not desynchronize sequence numbers."""
+    config = tshd_daemon
+    client = TshClient(
+        host="localhost",
+        port=config["port"],
+        keyfile=config["key_path"],
+    )
+
+    with client.session() as sess:
+        # Request non-existent directory listing
+        res_ls = client.run_ls("/nonexistent_dir_99999", capture_output=True, session=sess)
+        assert res_ls.returncode == 0
+        assert res_ls.stdout == ""
+
+        # Request non-existent file download
+        data = client.read_file_bytes("/nonexistent_file_99999.txt", session=sess)
+        assert data == b""
+
+        # Immediately run valid command to prove sequence counters remain in sync
+        res_valid = client.run_exec("/usr/bin/true", capture_output=True, session=sess)
+        assert res_valid.returncode == 0
+

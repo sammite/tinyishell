@@ -6,7 +6,7 @@ matching the C implementation in pel.c and tshd.c.
 
 from __future__ import annotations
 
-import concurrent.futures
+import contextlib
 import dataclasses
 import hashlib
 import hmac
@@ -26,6 +26,7 @@ GET_FILE = 1
 PUT_FILE = 2
 LS_DIR = 4
 EXEC_BIN = 5
+QUIT_SESSION = 6
 
 BUFSIZE = 4096
 
@@ -226,6 +227,14 @@ class PelSession:
         self.recv_seq += 1
         return plain
 
+    def quit(self) -> None:
+        """Sends QUIT_SESSION and gracefully closes the connection."""
+        try:
+            self.send_msg(bytes([QUIT_SESSION]))
+        except Exception:
+            pass
+        self.close()
+
     def close(self) -> None:
         """Closes the underlying socket."""
         try:
@@ -233,6 +242,12 @@ class PelSession:
         except OSError:
             pass
         self.sock.close()
+
+    def __enter__(self) -> PelSession:
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.quit()
 
 
 @dataclasses.dataclass
@@ -276,6 +291,7 @@ class TshClient:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect((self.host, self.port))
 
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         session = PelSession(sock, signing_key)
         try:
             session.handshake()
@@ -284,17 +300,36 @@ class TshClient:
             session.close()
             raise
 
-    def run_ls(self, remote_dir: str, capture_output: bool = True) -> TshResult:
-        """Performs remote directory listing (LS_DIR)."""
-        session = self._open_session()
+    def open_session(self) -> PelSession:
+        """Connects and authenticates, returning an active PelSession."""
+        return self._open_session()
+
+    @contextlib.contextmanager
+    def session(self):
+        """Context manager that opens and yields a persistent PelSession, quitting on exit."""
+        sess = self.open_session()
         try:
-            session.send_msg(bytes([LS_DIR]))
-            session.send_msg(remote_dir.encode("utf-8"))
+            yield sess
+        finally:
+            sess.quit()
+
+    def run_ls(
+        self,
+        remote_dir: str,
+        capture_output: bool = True,
+        session: PelSession | None = None,
+    ) -> TshResult:
+        """Performs remote directory listing (LS_DIR)."""
+        owns_session = session is None
+        s = self.open_session() if owns_session else session
+        try:
+            s.send_msg(bytes([LS_DIR]))
+            s.send_msg(remote_dir.encode("utf-8"))
 
             chunks: list[bytes] = []
             while True:
-                chunk = session.recv_msg()
-                if chunk is None:
+                chunk = s.recv_msg()
+                if not chunk:
                     break
                 if capture_output:
                     chunks.append(chunk)
@@ -305,16 +340,23 @@ class TshClient:
             out_str = b"".join(chunks).decode("utf-8", errors="replace") if capture_output else ""
             return TshResult(0, stdout=out_str)
         finally:
-            session.close()
+            if owns_session:
+                s.quit()
 
-    def run_exec(self, cmd_str: str, capture_output: bool = True) -> TshResult:
+    def run_exec(
+        self,
+        cmd_str: str,
+        capture_output: bool = True,
+        session: PelSession | None = None,
+    ) -> TshResult:
         """Executes a command on the remote server (EXEC_BIN)."""
-        session = self._open_session()
+        owns_session = session is None
+        s = self.open_session() if owns_session else session
         try:
-            session.send_msg(bytes([EXEC_BIN]))
-            session.send_msg(cmd_str.encode("utf-8"))
+            s.send_msg(bytes([EXEC_BIN]))
+            s.send_msg(cmd_str.encode("utf-8"))
 
-            res = session.recv_msg()
+            res = s.recv_msg()
             if res is None or len(res) != 1:
                 err_msg = "Unexpected response length from server.\n"
                 if not capture_output:
@@ -328,9 +370,16 @@ class TshClient:
                 sys.stdout.flush()
             return TshResult(exit_code, stdout=out_str)
         finally:
-            session.close()
+            if owns_session:
+                s.quit()
 
-    def run_get(self, remote_src: str, local_dst: str, capture_output: bool = True) -> TshResult:
+    def run_get(
+        self,
+        remote_src: str,
+        local_dst: str,
+        capture_output: bool = True,
+        session: PelSession | None = None,
+    ) -> TshResult:
         """Downloads a remote file (GET_FILE)."""
         # Determine local pathname matching tsh.c tsh_get_file
         filename = posixpath.basename(remote_src.rstrip("/"))
@@ -339,64 +388,77 @@ class TshClient:
         else:
             local_path = local_dst
 
+        owns_session = session is None
+        s = self.open_session() if owns_session else session
         try:
             with open(local_path, "wb") as fd:
-                session = self._open_session()
-                try:
-                    session.send_msg(bytes([GET_FILE]))
-                    session.send_msg(remote_src.encode("utf-8"))
+                s.send_msg(bytes([GET_FILE]))
+                s.send_msg(remote_src.encode("utf-8"))
 
-                    total = 0
-                    while True:
-                        chunk = session.recv_msg()
-                        if chunk is None:
-                            break
-                        fd.write(chunk)
-                        total += len(chunk)
-                        if not capture_output:
-                            sys.stdout.write(f"{total}\r")
-                            sys.stdout.flush()
-
-                    done_msg = f"{total} done.\n"
+                total = 0
+                while True:
+                    chunk = s.recv_msg()
+                    if not chunk:
+                        break
+                    fd.write(chunk)
+                    total += len(chunk)
                     if not capture_output:
-                        sys.stdout.write(done_msg)
+                        sys.stdout.write(f"{total}\r")
                         sys.stdout.flush()
-                    return TshResult(0, stdout=done_msg)
-                finally:
-                    session.close()
+
+                done_msg = f"{total} done.\n"
+                if not capture_output:
+                    sys.stdout.write(done_msg)
+                    sys.stdout.flush()
+                return TshResult(0, stdout=done_msg)
         except OSError as exc:
             err_msg = f"creat: {exc}\n"
             if not capture_output:
                 sys.stderr.write(err_msg)
             return TshResult(14, stderr=err_msg)
+        finally:
+            if owns_session:
+                s.quit()
 
-    def read_file_bytes(self, remote_src: str) -> bytes | None:
+    def read_file_bytes(
+        self,
+        remote_src: str,
+        session: PelSession | None = None,
+    ) -> bytes | None:
         """Retrieves a remote file directly into memory as bytes.
 
         Returns None if connection fails or if remote file is inaccessible.
         """
+        owns_session = session is None
         try:
-            session = self._open_session()
+            s = self.open_session() if owns_session else session
         except Exception:
             return None
 
         try:
-            session.send_msg(bytes([GET_FILE]))
-            session.send_msg(remote_src.encode("utf-8"))
+            s.send_msg(bytes([GET_FILE]))
+            s.send_msg(remote_src.encode("utf-8"))
 
             buf = bytearray()
             while True:
-                chunk = session.recv_msg()
-                if chunk is None:
+                chunk = s.recv_msg()
+                if not chunk:
                     break
                 buf.extend(chunk)
             return bytes(buf)
         except Exception:
             return None
         finally:
-            session.close()
+            if owns_session:
+                s.quit()
 
-    def run_put(self, local_src: str, remote_dst: str, capture_output: bool = True) -> TshResult:
+    def run_put(
+        self,
+        local_src: str,
+        remote_dst: str,
+        capture_output: bool = True,
+        session: PelSession | None = None,
+    ) -> TshResult:
         """Uploads a local file to the remote server (PUT_FILE)."""
         filename = os.path.basename(local_src)
         if remote_dst.endswith("/"):
@@ -404,157 +466,175 @@ class TshClient:
         else:
             remote_pathname = remote_dst + "/" + filename
 
+        owns_session = session is None
+        s = self.open_session() if owns_session else session
         try:
             with open(local_src, "rb") as fd:
-                session = self._open_session()
-                try:
-                    session.send_msg(bytes([PUT_FILE]))
-                    session.send_msg(remote_pathname.encode("utf-8"))
+                s.send_msg(bytes([PUT_FILE]))
+                s.send_msg(remote_pathname.encode("utf-8"))
 
-                    total = 0
-                    while True:
-                        chunk = fd.read(BUFSIZE)
-                        if not chunk:
-                            break
-                        session.send_msg(chunk)
-                        total += len(chunk)
-                        if not capture_output:
-                            sys.stdout.write(f"{total}\r")
-                            sys.stdout.flush()
-
-                    done_msg = f"{total} done.\n"
+                total = 0
+                while True:
+                    chunk = fd.read(BUFSIZE)
+                    if not chunk:
+                        break
+                    s.send_msg(chunk)
+                    total += len(chunk)
                     if not capture_output:
-                        sys.stdout.write(done_msg)
+                        sys.stdout.write(f"{total}\r")
                         sys.stdout.flush()
-                    return TshResult(0, stdout=done_msg)
-                finally:
-                    session.close()
+
+                # Send 0-byte frame to signal end of file data
+                s.send_msg(b"")
+
+                # Read 1-byte status from server
+                res = s.recv_msg()
+                if res is None or len(res) != 1 or res[0] != 0:
+                    err_msg = "Server write error\n"
+                    if not capture_output:
+                        sys.stderr.write(err_msg)
+                    return TshResult(21, stderr=err_msg)
+
+                done_msg = f"{total} done.\n"
+                if not capture_output:
+                    sys.stdout.write(done_msg)
+                    sys.stdout.flush()
+                return TshResult(0, stdout=done_msg)
         except OSError as exc:
             err_msg = f"open: {exc}\n"
             if not capture_output:
                 sys.stderr.write(err_msg)
             return TshResult(19, stderr=err_msg)
+        finally:
+            if owns_session:
+                s.quit()
 
-    def run_ps(self, capture_output: bool = True) -> TshResult:
+    def run_ps(
+        self,
+        capture_output: bool = True,
+        session: PelSession | None = None,
+    ) -> TshResult:
         """Retrieves and displays running processes from remote /proc."""
-        ls_res = self.run_ls("/proc", capture_output=True)
-        if ls_res.returncode != 0 or not ls_res.stdout:
-            err = "Error: /proc pseudo-filesystem not found or inaccessible on remote target\n"
-            if not capture_output:
-                sys.stderr.write(err)
-            return TshResult(1, stderr=err)
+        owns_session = session is None
+        s = self.open_session() if owns_session else session
+        try:
+            ls_res = self.run_ls("/proc", capture_output=True, session=s)
+            if ls_res.returncode != 0 or not ls_res.stdout:
+                err = "Error: /proc pseudo-filesystem not found or inaccessible on remote target\n"
+                if not capture_output:
+                    sys.stderr.write(err)
+                return TshResult(1, stderr=err)
 
-        pids: list[tuple[int, int]] = []
-        for line in ls_res.stdout.splitlines():
-            parts = line.strip().split()
-            if len(parts) >= 5 and parts[4].isdigit():
-                pids.append((int(parts[4]), int(parts[1])))
+            pids: list[tuple[int, int]] = []
+            for line in ls_res.stdout.splitlines():
+                parts = line.strip().split()
+                if len(parts) >= 5 and parts[4].isdigit():
+                    pids.append((int(parts[4]), int(parts[1])))
 
-        if not pids:
-            err = "Error: No active processes found in /proc on remote target\n"
-            if not capture_output:
-                sys.stderr.write(err)
-            return TshResult(1, stderr=err)
+            if not pids:
+                err = "Error: No active processes found in /proc on remote target\n"
+                if not capture_output:
+                    sys.stderr.write(err)
+                return TshResult(1, stderr=err)
 
-        def fetch_proc(pid: int, uid: int) -> dict | None:
-            stat_bytes = self.read_file_bytes(f"/proc/{pid}/stat")
-            if not stat_bytes:
-                return None
-
-            stat_str = stat_bytes.decode("utf-8", errors="replace").strip()
-            l = stat_str.find("(")
-            r = stat_str.rfind(")")
-            if l == -1 or r == -1 or r < l:
-                return None
-
-            comm = stat_str[l + 1 : r]
-            rest = stat_str[r + 1 :].strip().split()
-            if len(rest) < 22:
-                return None
-
-            state = rest[0]
-            ppid = rest[1]
-            try:
-                rss_pages = int(rest[21])
-                rss_bytes = rss_pages * 4096
-            except (ValueError, IndexError):
-                rss_bytes = 0
-
-            cmdline_bytes = self.read_file_bytes(f"/proc/{pid}/cmdline")
-            if cmdline_bytes:
-                cmd = (
-                    cmdline_bytes.replace(b"\x00", b" ")
-                    .decode("utf-8", errors="replace")
-                    .strip()
-                )
-            else:
-                cmd = ""
-
-            if not cmd:
-                cmd = f"[{comm}]"
-
-            user_str = "root" if uid == 0 else str(uid)
-            return {
-                "pid": pid,
-                "ppid": int(ppid),
-                "user": user_str,
-                "stat": state,
-                "rss": rss_bytes,
-                "cmd": cmd,
-            }
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-            future_to_pid = {executor.submit(fetch_proc, pid, uid): pid for pid, uid in pids}
             procs = []
-            for future in concurrent.futures.as_completed(future_to_pid):
+            for pid, uid in pids:
+                stat_bytes = self.read_file_bytes(f"/proc/{pid}/stat", session=s)
+                if not stat_bytes:
+                    continue
+
+                stat_str = stat_bytes.decode("utf-8", errors="replace").strip()
+                l = stat_str.find("(")
+                r = stat_str.rfind(")")
+                if l == -1 or r == -1 or r < l:
+                    continue
+
+                comm = stat_str[l + 1 : r]
+                rest = stat_str[r + 1 :].strip().split()
+                if len(rest) < 22:
+                    continue
+
+                state = rest[0]
+                ppid = rest[1]
                 try:
-                    res = future.result()
-                    if res:
-                        procs.append(res)
-                except Exception:
-                    pass
+                    rss_pages = int(rest[21])
+                    rss_bytes = rss_pages * 4096
+                except (ValueError, IndexError):
+                    rss_bytes = 0
 
-        procs.sort(key=lambda x: x["pid"])
+                cmdline_bytes = self.read_file_bytes(f"/proc/{pid}/cmdline", session=s)
+                if cmdline_bytes:
+                    cmd = (
+                        cmdline_bytes.replace(b"\x00", b" ")
+                        .decode("utf-8", errors="replace")
+                        .strip()
+                    )
+                else:
+                    cmd = ""
 
-        def format_rss(n_bytes: int) -> str:
-            if n_bytes == 0:
-                return "0B"
-            if n_bytes < 1024 * 1024:
-                return f"{n_bytes // 1024}K"
-            return f"{n_bytes / (1024 * 1024):.1f}M"
+                if not cmd:
+                    cmd = f"[{comm}]"
 
-        lines = [f"{'PID':>6} {'PPID':>6} {'USER':<8} {'STAT':<4} {'RSS':>8} {'COMMAND'}"]
-        for p in procs:
-            lines.append(
-                f"{p['pid']:>6} {p['ppid']:>6} {p['user']:<8} {p['stat']:<4} {format_rss(p['rss']):>8} {p['cmd']}"
-            )
-        output_str = "\n".join(lines) + "\n"
+                user_str = "root" if uid == 0 else str(uid)
+                procs.append({
+                    "pid": pid,
+                    "ppid": int(ppid),
+                    "user": user_str,
+                    "stat": state,
+                    "rss": rss_bytes,
+                    "cmd": cmd,
+                })
 
-        if not capture_output:
-            sys.stdout.write(output_str)
-            sys.stdout.flush()
+            procs.sort(key=lambda x: x["pid"])
 
-        return TshResult(0, stdout=output_str)
+            def format_rss(n_bytes: int) -> str:
+                if n_bytes == 0:
+                    return "0B"
+                if n_bytes < 1024 * 1024:
+                    return f"{n_bytes // 1024}K"
+                return f"{n_bytes / (1024 * 1024):.1f}M"
 
-    def execute(self, action: str, *args, capture_output: bool = True) -> TshResult:
+            lines = [f"{'PID':>6} {'PPID':>6} {'USER':<8} {'STAT':<4} {'RSS':>8} {'COMMAND'}"]
+            for p in procs:
+                lines.append(
+                    f"{p['pid']:>6} {p['ppid']:>6} {p['user']:<8} {p['stat']:<4} {format_rss(p['rss']):>8} {p['cmd']}"
+                )
+            output_str = "\n".join(lines) + "\n"
+
+            if not capture_output:
+                sys.stdout.write(output_str)
+                sys.stdout.flush()
+
+            return TshResult(0, stdout=output_str)
+        finally:
+            if owns_session:
+                s.quit()
+
+    def execute(
+        self,
+        action: str,
+        *args,
+        capture_output: bool = True,
+        session: PelSession | None = None,
+    ) -> TshResult:
         """Dispatches an action string (matching the CLI verbs)."""
         try:
             if action == "ls":
                 target = args[0] if args else "/"
-                return self.run_ls(target, capture_output=capture_output)
+                return self.run_ls(target, capture_output=capture_output, session=session)
             if action == "exec":
                 cmd_str = args[0] if args else ""
-                return self.run_exec(cmd_str, capture_output=capture_output)
+                return self.run_exec(cmd_str, capture_output=capture_output, session=session)
             if action == "get":
                 remote_src = args[0]
                 local_dst = args[1] if len(args) > 1 else "."
-                return self.run_get(remote_src, local_dst, capture_output=capture_output)
+                return self.run_get(remote_src, local_dst, capture_output=capture_output, session=session)
             if action == "put":
                 local_src = args[0]
                 remote_dst = args[1] if len(args) > 1 else "."
-                return self.run_put(local_src, remote_dst, capture_output=capture_output)
+                return self.run_put(local_src, remote_dst, capture_output=capture_output, session=session)
             if action == "ps":
-                return self.run_ps(capture_output=capture_output)
+                return self.run_ps(capture_output=capture_output, session=session)
             return TshResult(1, stderr=f"Unknown action: {action}\n")
         except (FileNotFoundError, ValueError) as exc:
             err = f"{exc}\n"

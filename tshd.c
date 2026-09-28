@@ -23,6 +23,7 @@
 #include <arpa/inet.h>
 #include <stdint.h>
 #include <signal.h>
+#include <netinet/tcp.h>
 
 #include "tsh.h"
 #include "pel.h"
@@ -115,6 +116,7 @@ int main( int argc, char *argv[] )
 
     signal( SIGTERM, sigterm_handler );
     signal( SIGINT, sigterm_handler );
+    signal( SIGPIPE, SIG_IGN );
 
     if( argc > 1 && strcmp( argv[1], "-f" ) == 0 )
     {
@@ -325,60 +327,75 @@ int process_client( int client )
 
     ret = pel_server_init( client, default_dev_pk );
 
+    alarm( 0 );
+
     if( ret != PEL_SUCCESS )
     {
         shutdown( client, 2 );
         return( 10 );
     }
 
-    alarm( 0 );
+    struct timeval tv;
+    tv.tv_sec = 30;
+    tv.tv_usec = 0;
+    setsockopt( client, SOL_SOCKET, SO_RCVTIMEO, (const char *) &tv, sizeof( tv ) );
+    setsockopt( client, SOL_SOCKET, SO_SNDTIMEO, (const char *) &tv, sizeof( tv ) );
+    int nodelay_flag = 1;
+    setsockopt( client, IPPROTO_TCP, TCP_NODELAY, (void *) &nodelay_flag, sizeof( nodelay_flag ) );
 
-    /* which action does the user wants us to do? */
+    /* Persistent command dispatch loop */
 
-    ret = pel_recv_msg( client, message, &len );
-
-    if( ret != PEL_SUCCESS )
+    while( 1 )
     {
-        return( 11 );
-    }
+        alarm( 300 );
 
-    if( len != 1 )
-    {
-        return( 12 );
-    }
+        ret = pel_recv_msg( client, message, &len );
 
-    action = (int) message[0];
+        alarm( 0 );
 
-    switch( action )
-    {
-        case GET_FILE:
-
-            ret = tshd_get_file( client );
+        if( ret != PEL_SUCCESS || len != 1 )
+        {
             break;
+        }
 
-        case PUT_FILE:
+        action = (int) message[0];
 
-            ret = tshd_put_file( client );
+        if( action == QUIT_SESSION )
+        {
             break;
+        }
 
-        case LS_DIR:
+        switch( action )
+        {
+            case GET_FILE:
+                ret = tshd_get_file( client );
+                break;
 
-            ret = tshd_ls_dir( client );
+            case PUT_FILE:
+                ret = tshd_put_file( client );
+                break;
+
+            case LS_DIR:
+                ret = tshd_ls_dir( client );
+                break;
+
+            case EXEC_BIN:
+                ret = tshd_execv( client );
+                break;
+
+            default:
+                ret = -1;
+                break;
+        }
+
+        if( ret < 0 )
+        {
             break;
-
-        case EXEC_BIN:
-
-            ret = tshd_execv( client );
-            break;
-
-        default:
-
-            ret = 15;
-            break;
+        }
     }
 
     shutdown( client, 2 );
-    return( ret );
+    return( 0 );
 }
 
 int tshd_get_file( int client )
@@ -391,7 +408,7 @@ int tshd_get_file( int client )
 
     if( ret != PEL_SUCCESS )
     {
-        return( 13 );
+        return( -1 );
     }
 
     message[len] = '\0';
@@ -402,7 +419,9 @@ int tshd_get_file( int client )
 
     if( fd < 0 )
     {
-        return( 14 );
+        /* Send 0-byte frame so client unblocks and sequence numbers stay aligned */
+        pel_send_msg( client, (unsigned char *) "", 0 );
+        return( 0 );
     }
 
     /* send the data */
@@ -419,7 +438,8 @@ int tshd_get_file( int client )
         if( len < 0 )
         {
             close( fd );
-            return( 16 );
+            pel_send_msg( client, (unsigned char *) "", 0 );
+            return( 0 );
         }
 
         ret = pel_send_msg( client, message, len );
@@ -427,17 +447,27 @@ int tshd_get_file( int client )
         if( ret != PEL_SUCCESS )
         {
             close( fd );
-            return( 17 );
+            return( -1 );
         }
     }
 
     close( fd );
-    return( 18 );
+
+    /* Send 0-byte frame to signal EOF */
+    ret = pel_send_msg( client, (unsigned char *) "", 0 );
+    if( ret != PEL_SUCCESS )
+    {
+        return( -1 );
+    }
+
+    return( 0 );
 }
 
 int tshd_put_file( int client )
 {
     int ret, len, fd;
+    int write_error = 0;
+    unsigned char status;
 
     /* get the filename */
 
@@ -445,7 +475,7 @@ int tshd_put_file( int client )
 
     if( ret != PEL_SUCCESS )
     {
-        return( 19 );
+        return( -1 );
     }
 
     message[len] = '\0';
@@ -456,10 +486,10 @@ int tshd_put_file( int client )
 
     if( fd < 0 )
     {
-        return( 20 );
+        write_error = 1;
     }
 
-    /* fetch the data */
+    /* fetch the data until 0-byte frame */
 
     while( 1 )
     {
@@ -467,24 +497,41 @@ int tshd_put_file( int client )
 
         if( ret != PEL_SUCCESS )
         {
-            if( pel_errno == PEL_CONN_CLOSED )
+            if( fd >= 0 )
             {
-                break;
+                close( fd );
             }
-
-            close( fd );
-            return( 21 );
+            return( -1 );
         }
 
-        if( write( fd, message, len ) != len )
+        if( len == 0 )
         {
-            close( fd );
-            return( 22 );
+            /* 0-byte frame marks end of upload */
+            break;
+        }
+
+        if( !write_error )
+        {
+            if( write( fd, message, len ) != len )
+            {
+                write_error = 1;
+            }
         }
     }
 
-    close( fd );
-    return( 23 );
+    if( fd >= 0 )
+    {
+        close( fd );
+    }
+
+    status = (unsigned char)( write_error ? 1 : 0 );
+    ret = pel_send_msg( client, &status, 1 );
+    if( ret != PEL_SUCCESS )
+    {
+        return( -1 );
+    }
+
+    return( 0 );
 }
 
 int tshd_ls_dir( int client )
@@ -502,7 +549,7 @@ int tshd_ls_dir( int client )
 
     if( ret != PEL_SUCCESS )
     {
-        return( 56 );
+        return( -1 );
     }
 
     message[len] = '\0';
@@ -515,7 +562,9 @@ int tshd_ls_dir( int client )
 
     if( dfd < 0 )
     {
-        return( 57 );
+        /* Send 0-byte frame so client unblocks and sequence numbers stay aligned */
+        pel_send_msg( client, (unsigned char *) "", 0 );
+        return( 0 );
     }
 
     /* iterate through entries using SYS_getdents64 */
@@ -559,7 +608,7 @@ int tshd_ls_dir( int client )
             if( ret != PEL_SUCCESS )
             {
                 close( dfd );
-                return( 58 );
+                return( -1 );
             }
 
             bpos += entry->d_reclen;
@@ -568,7 +617,14 @@ int tshd_ls_dir( int client )
 
     close( dfd );
 
-    return( 59 );
+    /* Send 0-byte frame to signal end of directory listing */
+    ret = pel_send_msg( client, (unsigned char *) "", 0 );
+    if( ret != PEL_SUCCESS )
+    {
+        return( -1 );
+    }
+
+    return( 0 );
 }
 
 int tshd_execv( int client )
@@ -584,7 +640,7 @@ int tshd_execv( int client )
 
     if( ret != PEL_SUCCESS )
     {
-        return( 60 );
+        return( -1 );
     }
 
     message[len] = '\0';
@@ -601,14 +657,18 @@ int tshd_execv( int client )
 
     if( i == 0 )
     {
-        return( 62 );
+        exit_code = 127;
+        pel_send_msg( client, &exit_code, 1 );
+        return( 0 );
     }
 
     pid = fork();
 
     if( pid < 0 )
     {
-        return( 64 );
+        exit_code = 127;
+        pel_send_msg( client, &exit_code, 1 );
+        return( 0 );
     }
 
     if( pid == 0 )
@@ -637,7 +697,11 @@ int tshd_execv( int client )
             exit_code = 255;
         }
 
-        pel_send_msg( client, &exit_code, 1 );
+        ret = pel_send_msg( client, &exit_code, 1 );
+        if( ret != PEL_SUCCESS )
+        {
+            return( -1 );
+        }
     }
 
     return( 0 );

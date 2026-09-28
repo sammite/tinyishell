@@ -10,6 +10,7 @@ The `tinyishell` client is implemented natively in Python ([`tsh_client.py`](fil
 
 - **Authentication:** All client connections authenticate with an Ed25519 private key seed (by default `./tsh_key`).
 - **Transport Security:** Once authenticated via the Monocypher PEL protocol, all subsequent traffic is encrypted using XChaCha20-Poly1305 AEAD with BLAKE2b key derivation and 64-bit sequence counters.
+- **Persistent Session Architecture:** Connections maintain an active command dispatch loop over a single TCP stream. Operations (`ls`, `get`, `put`) use in-band 0-byte completion frames rather than socket closure, and `TCP_NODELAY` enables sub-millisecond sequential command execution without reconnection or repeated forking.
 
 ---
 
