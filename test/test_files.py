@@ -150,3 +150,32 @@ def test_large_file_integrity(tshd_daemon, tmp_path, size_kb):
         ],
         check=False,
     )
+
+
+def test_get_nonexistent_file_preserves_local(tshd_daemon, tmp_path):
+    """Verify downloading a non-existent remote file fails and preserves local file."""
+    config = tshd_daemon
+
+    local_target = tmp_path / "important_local_file.txt"
+    initial_content = "DO_NOT_TRUNCATE_THIS_FILE"
+    local_target.write_text(initial_content)
+
+    get_res = subprocess.run(
+        [
+            config["tsh_path"],
+            "-s",
+            config["secret"],
+            "localhost",
+            "get",
+            "/var/tmp/nonexistent_remote_file_987654.bin",
+            str(local_target),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert get_res.returncode != 0
+    assert "not found or inaccessible" in get_res.stderr
+    assert local_target.exists()
+    assert local_target.read_text() == initial_content

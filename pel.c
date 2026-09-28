@@ -156,7 +156,7 @@ static int pel_recv_all(int s, void *buf, size_t len, int flags)
  * 2. Generate client ephemeral keypair (c_esk, c_epk).
  * 3. Sign transcript: s_epk (32B) || c_epk (32B) || n_s (16B) = 80B using developer Ed25519 seed.
  * 4. Send Msg 2 to Server: c_epk (32B) || sig (64B) = 96B.
- * 5. Compute ECDH shared secret & derive directional ChaCha20-Poly1305 keys.
+ * 5. Compute ECDH shared secret & derive directional XChaCha20-Poly1305 keys.
  * 6. Receive & verify server confirmation (Msg 3, 16B).
  *
  * \param[in] server   Connected server socket descriptor.
@@ -276,7 +276,7 @@ int pel_client_init(int server, const uint8_t dev_seed[32])
  * 2. Send Msg 1 to Client: s_epk (32B) || n_s (16B) = 48B.
  * 3. Recv Msg 2 from Client: c_epk (32B) || sig (64B) = 96B.
  * 4. Verify client Ed25519 signature against developer public key.
- * 5. Compute ECDH shared secret & derive directional ChaCha20-Poly1305 keys.
+ * 5. Compute ECDH shared secret & derive directional XChaCha20-Poly1305 keys.
  * 6. Send server confirmation (Msg 3, 16B).
  *
  * \param[in] client Connected client socket descriptor.
@@ -376,7 +376,7 @@ int pel_server_init(int client, const uint8_t dev_pk[32])
 }
 
 /**
- * \brief Sends an authenticated and encrypted message using ChaCha20-Poly1305 AEAD.
+ * \brief Sends an authenticated and encrypted message using XChaCha20-Poly1305 AEAD.
  *
  * Wire format:
  * - [0..1]   = length (big-endian 16-bit)
@@ -433,15 +433,19 @@ int pel_send_msg(int sockfd, const unsigned char *msg, int length)
 }
 
 /**
- * \brief Receives and decrypts an authenticated message using ChaCha20-Poly1305 AEAD.
+ * \brief Receives and decrypts an authenticated message using XChaCha20-Poly1305 AEAD.
+ *
+ * Decrypts from internal scratch wire buffer into the destination buffer msg.
  *
  * Wire format:
  * - [0..1]   = length (big-endian 16-bit)
  * - [2..17]  = Poly1305 MAC tag (16 bytes)
  * - [18..]   = ChaCha20 ciphertext (length bytes)
  *
+ * \note msg buffer must have an allocated capacity of at least BUFSIZE bytes.
+ *
  * \param[in]  sockfd Socket file descriptor.
- * \param[out] msg    Pointer to buffer to store decrypted plaintext.
+ * \param[out] msg    Pointer to destination buffer to store decrypted plaintext (>= BUFSIZE).
  * \param[out] length Pointer to integer storing the number of bytes decrypted.
  * \return PEL_SUCCESS on success, PEL_FAILURE on error or MAC failure.
  */

@@ -14,7 +14,7 @@ import posixpath
 import shlex
 import sys
 
-from tsh_pel import TshClient, TshResult
+from tsh_pel import PelSession, TshClient, TshResult
 
 try:
     import readline  # pylint: disable=unused-import
@@ -79,7 +79,7 @@ class TshRepl(cmd.Cmd):
         if not self.remote_cwd.startswith("/"):
             self.remote_cwd = "/" + self.remote_cwd
         self.last_exit_code = 0
-        self.session = None
+        self.session: PelSession | None = None
 
         self.client = TshClient(
             host=self.host,
@@ -98,7 +98,7 @@ class TshRepl(cmd.Cmd):
             self.session.quit()
             self.session = None
 
-    def get_or_create_session(self):
+    def get_or_create_session(self) -> PelSession | None:
         """Returns active persistent session, reconnecting if disconnected.
 
         Returns:
@@ -149,8 +149,13 @@ class TshRepl(cmd.Cmd):
         action_args = args[1:]
         session = self.get_or_create_session()
         res = self.client.execute(action, *action_args, capture_output=capture_output, session=session)
-        if res.returncode == 4 and self.session is not None:
-            self.session = None
+        if (
+            res.returncode in (4, 11)
+            or (self.session is not None and self.session.sock is None)
+        ):
+            if self.session is not None:
+                self.session.close()
+                self.session = None
         return res
 
     def check_dir_exists(self, remote_dir: str) -> bool:
@@ -160,10 +165,11 @@ class TshRepl(cmd.Cmd):
             remote_dir: Remote directory path to probe.
 
         Returns:
-            bool: True if the remote directory exists and is readable, False otherwise.
+            bool: True if the remote directory exists, False otherwise.
         """
+        if remote_dir == "/":
+            return True
         res = self.run_tsh("ls", remote_dir)
-        # Any valid directory listing will contain at least '.' and '..'
         return res.returncode == 0 and bool(res.stdout and res.stdout.strip())
 
     # Built-in REPL commands
@@ -261,6 +267,12 @@ class TshRepl(cmd.Cmd):
             print("Usage: exec <remote_cmd>")
             self.last_exit_code = 1
             return
+
+        parts = safe_shlex_split(cmd_str)
+        if parts:
+            if not parts[0].startswith("/"):
+                parts[0] = self.resolve_remote_path(parts[0])
+            cmd_str = " ".join(parts)
 
         res = self.run_tsh("exec", cmd_str)
         if res.stdout:

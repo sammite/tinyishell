@@ -509,10 +509,23 @@ class TshClient:
         owns_session = session is None
         s = self.open_session() if owns_session else session
         try:
-            with open(local_path, "wb") as fd:
-                s.send_msg(bytes([GET_FILE]))
-                s.send_msg(remote_src.encode("utf-8"))
+            s.send_msg(bytes([GET_FILE]))
+            s.send_msg(remote_src.encode("utf-8"))
 
+            # Receive 1-byte status header from server
+            status_frame = s.recv_msg()
+            if not status_frame or len(status_frame) != 1 or status_frame[0] != 0:
+                # Consume trailing 0-byte frame delimiter if present
+                try:
+                    s.recv_msg()
+                except Exception:
+                    pass
+                err_msg = f"get: remote file '{remote_src}' not found or inaccessible\n"
+                if not capture_output:
+                    sys.stderr.write(err_msg)
+                return TshResult(2, stderr=err_msg)
+
+            with open(local_path, "wb") as fd:
                 total = 0
                 while True:
                     chunk = s.recv_msg()
@@ -542,7 +555,7 @@ class TshClient:
         self,
         remote_src: str,
         session: PelSession | None = None,
-    ) -> bytes | None:
+    ) -> bytes:
         """Retrieves a remote file directly into memory as bytes.
 
         Args:
@@ -550,17 +563,25 @@ class TshClient:
             session: Optional persistent PelSession to reuse.
 
         Returns:
-            bytes: Complete file contents in bytes, or None if inaccessible.
+            bytes: Complete file contents in bytes, or empty bytes if inaccessible.
         """
         owns_session = session is None
         try:
             s = self.open_session() if owns_session else session
         except Exception:
-            return None
+            return b""
 
         try:
             s.send_msg(bytes([GET_FILE]))
             s.send_msg(remote_src.encode("utf-8"))
+
+            status_frame = s.recv_msg()
+            if not status_frame or len(status_frame) != 1 or status_frame[0] != 0:
+                try:
+                    s.recv_msg()
+                except Exception:
+                    pass
+                return b""
 
             buf = bytearray()
             while True:
@@ -570,7 +591,7 @@ class TshClient:
                 buf.extend(chunk)
             return bytes(buf)
         except Exception:
-            return None
+            return b""
         finally:
             if owns_session:
                 s.quit()
@@ -601,10 +622,12 @@ class TshClient:
 
         owns_session = session is None
         s = self.open_session() if owns_session else session
+        started_remote = False
         try:
             with open(local_src, "rb") as fd:
                 s.send_msg(bytes([PUT_FILE]))
                 s.send_msg(remote_pathname.encode("utf-8"))
+                started_remote = True
 
                 total = 0
                 while True:
@@ -634,6 +657,12 @@ class TshClient:
                     sys.stdout.flush()
                 return TshResult(0, stdout=done_msg)
         except OSError as exc:
+            if started_remote:
+                try:
+                    s.send_msg(b"")
+                    s.recv_msg()
+                except Exception:
+                    s.close()
             err_msg = f"open: {exc}\n"
             if not capture_output:
                 sys.stderr.write(err_msg)
@@ -698,23 +727,28 @@ class TshClient:
                 state = rest[0]
                 ppid = rest[1]
                 try:
+                    vsize = int(rest[20])
+                except (ValueError, IndexError):
+                    vsize = 0
+                try:
                     rss_pages = int(rest[21])
                     rss_bytes = rss_pages * 4096
                 except (ValueError, IndexError):
                     rss_bytes = 0
 
-                cmdline_bytes = self.read_file_bytes(f"/proc/{pid}/cmdline", session=s)
-                if cmdline_bytes:
-                    cmd = (
-                        cmdline_bytes.replace(b"\x00", b" ")
-                        .decode("utf-8", errors="replace")
-                        .strip()
-                    )
-                else:
-                    cmd = ""
-
-                if not cmd:
+                # Kernel threads (vsize == 0) have no cmdline; skip redundant round-trip
+                if vsize == 0:
                     cmd = f"[{comm}]"
+                else:
+                    cmdline_bytes = self.read_file_bytes(f"/proc/{pid}/cmdline", session=s)
+                    if cmdline_bytes:
+                        cmd = (
+                            cmdline_bytes.replace(b"\x00", b" ")
+                            .decode("utf-8", errors="replace")
+                            .strip()
+                        )
+                    else:
+                        cmd = f"[{comm}]"
 
                 user_str = "root" if uid == 0 else str(uid)
                 procs.append({

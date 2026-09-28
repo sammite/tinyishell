@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <signal.h>
 #include <netinet/tcp.h>
+#include <errno.h>
 
 #include "tsh.h"
 #include "pel.h"
@@ -388,7 +389,7 @@ int process_client( int client )
     }
 
     struct timeval tv;
-    tv.tv_sec = 30;
+    tv.tv_sec = 300;
     tv.tv_usec = 0;
     setsockopt( client, SOL_SOCKET, SO_RCVTIMEO, (const char *) &tv, sizeof( tv ) );
     setsockopt( client, SOL_SOCKET, SO_SNDTIMEO, (const char *) &tv, sizeof( tv ) );
@@ -399,11 +400,7 @@ int process_client( int client )
 
     while( 1 )
     {
-        alarm( 300 );
-
         ret = pel_recv_msg( client, message, &len );
-
-        alarm( 0 );
 
         if( ret != PEL_SUCCESS || len != 1 )
         {
@@ -447,16 +444,16 @@ int process_client( int client )
     }
 
     shutdown( client, 2 );
+    close( client );
     return( 0 );
 }
 
 /**
  * \brief Handles a file download request from the client.
  *
- * Receives the target file path via PEL, opens the file, streams its contents
- * in chunks up to BUFSIZE, and terminates the transfer with a 0-byte frame.
- * If the file cannot be opened or read, an empty 0-byte frame is sent to ensure
- * protocol synchronization.
+ * Receives the target file path via PEL, opens the file, sends a 1-byte
+ * status header (0 for success, 1 for error), streams its contents in chunks
+ * up to BUFSIZE, and terminates the transfer with a 0-byte frame.
  *
  * \param[in] client Connected client socket file descriptor.
  * \return 0 on success, or -1 on unrecoverable network/protocol error.
@@ -464,6 +461,7 @@ int process_client( int client )
 int tshd_get_file( int client )
 {
     int ret, len, fd;
+    unsigned char status;
 
     /* get the filename */
 
@@ -482,9 +480,20 @@ int tshd_get_file( int client )
 
     if( fd < 0 )
     {
-        /* Send 0-byte frame so client unblocks and sequence numbers stay aligned */
+        /* Status 1: file open error, followed by 0-byte delimiter */
+        status = 1;
+        pel_send_msg( client, &status, 1 );
         pel_send_msg( client, (unsigned char *) "", 0 );
         return( 0 );
+    }
+
+    /* Status 0: success, followed by data chunks and 0-byte delimiter */
+    status = 0;
+    ret = pel_send_msg( client, &status, 1 );
+    if( ret != PEL_SUCCESS )
+    {
+        close( fd );
+        return( -1 );
     }
 
     /* send the data */
@@ -622,9 +631,8 @@ int tshd_ls_dir( int client )
 {
     int ret, len, dfd;
     struct stat st;
-    char path[BUFSIZE];
-    char line[BUFSIZE + 256];
-    char getdents_buf[1024] __attribute__( ( aligned( 8 ) ) );
+    char line[512];
+    char getdents_buf[512] __attribute__( ( aligned( 8 ) ) );
     int nread;
 
     /* get the directory path */
@@ -637,12 +645,10 @@ int tshd_ls_dir( int client )
     }
 
     message[len] = '\0';
-    strncpy( path, (char *) message, BUFSIZE - 1 );
-    path[BUFSIZE - 1] = '\0';
 
     /* open the directory */
 
-    dfd = open( path, O_RDONLY | O_DIRECTORY );
+    dfd = open( (char *) message, O_RDONLY | O_DIRECTORY );
 
     if( dfd < 0 )
     {
@@ -714,8 +720,8 @@ int tshd_ls_dir( int client )
 /**
  * \brief Handles an executable command execution request from the client.
  *
- * Receives the command string via PEL, tokenizes arguments in-place, forks
- * a child process to execute the binary via execv, waits for termination, and
+ * Receives the command string via PEL, tokenizes arguments in-place using strtok_r,
+ * forks a child process to execute the binary via execv, waits for termination, and
  * transmits the child's exit status code (1 byte) back to the client.
  *
  * \param[in] client Connected client socket file descriptor.
@@ -727,6 +733,7 @@ int tshd_execv( int client )
     char *argv[64];
     int i = 0;
     unsigned char exit_code;
+    char *saveptr = NULL;
 
     /* get the command line */
 
@@ -739,13 +746,13 @@ int tshd_execv( int client )
 
     message[len] = '\0';
 
-    /* parse directly on message buffer without strdup/malloc */
+    /* parse directly on message buffer using reentrant strtok_r */
 
-    char *token = strtok( (char *) message, " " );
+    char *token = strtok_r( (char *) message, " ", &saveptr );
     while( token != NULL && i < 63 )
     {
         argv[i++] = token;
-        token = strtok( NULL, " " );
+        token = strtok_r( NULL, " ", &saveptr );
     }
     argv[i] = NULL;
 
@@ -774,7 +781,18 @@ int tshd_execv( int client )
         execv( argv[0], argv );
 
         /* if execv returns, an error occurred */
-        exit( 1 );
+        if( errno == ENOENT )
+        {
+            exit( 127 );
+        }
+        else if( errno == EACCES )
+        {
+            exit( 126 );
+        }
+        else
+        {
+            exit( 127 );
+        }
     }
     else
     {
