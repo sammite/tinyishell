@@ -54,6 +54,41 @@ def test_python_client_direct_cli_exec(tshd_daemon):
     assert "Exit code: 0" in res.stdout
 
 
+def test_python_client_direct_cli_ps(tshd_daemon):
+    """Verify single-shot CLI 'ps' invocation parses /proc correctly."""
+    config = tshd_daemon
+    # With explicit host
+    cmd = [
+        "python3",
+        "tsh_client.py",
+        "-k",
+        config["key_path"],
+        "-p",
+        str(config["port"]),
+        "localhost",
+        "ps",
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    assert res.returncode == 0
+    assert "PID" in res.stdout and "COMMAND" in res.stdout
+    assert "tshd" in res.stdout
+
+    # With implicit host (tsh ps)
+    cmd_implicit = [
+        "python3",
+        "tsh_client.py",
+        "-k",
+        config["key_path"],
+        "-p",
+        str(config["port"]),
+        "ps",
+    ]
+    res_implicit = subprocess.run(cmd_implicit, capture_output=True, text=True, check=False)
+    assert res_implicit.returncode == 0
+    assert "PID" in res_implicit.stdout and "COMMAND" in res_implicit.stdout
+
+
+
 def test_python_client_direct_cli_put_get_integrity(tshd_daemon, tmp_path):
     """Verify single-shot CLI 'put' and 'get' file integrity with binary data."""
     config = tshd_daemon

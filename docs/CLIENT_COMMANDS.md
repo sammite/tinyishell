@@ -36,7 +36,7 @@ The `tinyishell` client is implemented natively in Python ([`tsh_client.py`](fil
 
 ## 3. Single-Shot Mode (CLI Commands)
 
-When an action verb (`ls`, `exec`, `get`, `put`) is passed on the command line, the client executes the request, prints the result, and terminates immediately.
+When an action verb (`ls`, `exec`, `get`, `put`, `ps`) is passed on the command line, the client executes the request, prints the result, and terminates immediately.
 
 ### 3.1 Directory Listing (`ls`)
 Queries and displays remote file attributes directly via the daemon's internal `SYS_getdents64` library call.
@@ -122,7 +122,32 @@ Downloads a remote file from the target device to a local directory or file path
 
 ---
 
-### 3.5 Connect-Back Mode (`cb`)
+### 3.5 Process Listing (`ps`)
+Queries running processes directly by traversing `/proc` on the remote target without requiring an external `ps` binary or any modifications to `tshd`. The client discovers PIDs via remote directory listing and fetches process metadata (`/proc/<pid>/stat`, `/proc/<pid>/cmdline`) concurrently.
+
+- **Syntax:**
+  ```bash
+  ./tsh [OPTIONS] <hostname|cb> ps
+  ```
+- **Output Format:**
+  ```
+     PID   PPID USER     STAT      RSS COMMAND
+       1      0 root     S        4.2M /sbin/init
+    1240      1 root     S        1.8M /usr/sbin/dropbear -F
+    1520      1 1000     S        128K ./tshd
+  ```
+- **Examples:**
+  ```bash
+  # List running processes on remote target
+  ./tsh 192.168.1.100 ps
+
+  # List processes on default localhost target
+  ./tsh ps
+  ```
+
+---
+
+### 3.6 Connect-Back Mode (`cb`)
 Used when the embedded target is behind a NAT or firewall and `tshd` was built with `CB_MODE` enabled. Instead of connecting outbound to the target, the client binds a local listening socket and waits for the target to connect back.
 
 - **Syntax:**
@@ -133,6 +158,7 @@ Used when the embedded target is behind a NAT or firewall and `tshd` was built w
   ```bash
   # 1. Start client waiting for target connection on port 5555
   ./tsh -p 5555 cb ls /
+  ```
 
   # 2. Output on client terminal:
   # Waiting for the server to connect...connected.
@@ -167,6 +193,7 @@ tsh [192.168.1.100:/]$
 | `exec` | `exec <command>` | Executes command on remote target (automatically prepends `cd <cwd> &&` to maintain directory context). |
 | `put` | `put <local-file> [remote-dst]` | Uploads local file into the currently tracked remote directory (or optional remote destination path). |
 | `get` | `get <remote-file> [local-dst]` | Downloads file relative to current remote directory into local directory. |
+| `ps` | `ps` | Lists running processes on the remote target parsed from `/proc`. |
 | `lcd` | `lcd <local-dir>` | Changes local workstation working directory. |
 | `lpwd` | `lpwd` | Displays current local workstation working directory. |
 | `help`, `?` | `help [command]` | Lists all available REPL commands and displays syntax documentation. |

@@ -237,6 +237,15 @@ class TshRepl(cmd.Cmd):
             print(f"lls: {exc}")
             self.last_exit_code = 1
 
+    def do_ps(self, _arg):
+        """ps: List running processes on the remote target."""
+        res = self.run_tsh("ps")
+        if res.stdout:
+            sys.stdout.write(res.stdout)
+        if res.stderr:
+            sys.stderr.write(res.stderr)
+        self.last_exit_code = res.returncode
+
     def do_exit(self, _arg):
         """exit: Exit the interactive shell."""
         return True
@@ -286,7 +295,7 @@ def parse_args():
     parser.add_argument(
         "action",
         nargs="?",
-        help="Single-shot action (ls, exec, get, put)",
+        help="Single-shot action (ls, exec, get, put, ps)",
     )
     parser.add_argument(
         "action_args",
@@ -325,7 +334,7 @@ def parse_args():
     args = parser.parse_args()
 
     # Normalize if user ran 'tsh_client.py ls /' without explicit host
-    if args.host in ("ls", "exec", "get", "put") and not args.command:
+    if args.host in ("ls", "exec", "get", "put", "ps") and not args.command:
         real_action = args.host
         real_action_args = ([args.action] if args.action else []) + args.action_args
         args.host = "localhost"

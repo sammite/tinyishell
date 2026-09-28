@@ -6,6 +6,7 @@ matching the C implementation in pel.c and tshd.c.
 
 from __future__ import annotations
 
+import concurrent.futures
 import dataclasses
 import hashlib
 import hmac
@@ -369,6 +370,32 @@ class TshClient:
                 sys.stderr.write(err_msg)
             return TshResult(14, stderr=err_msg)
 
+    def read_file_bytes(self, remote_src: str) -> bytes | None:
+        """Retrieves a remote file directly into memory as bytes.
+
+        Returns None if connection fails or if remote file is inaccessible.
+        """
+        try:
+            session = self._open_session()
+        except Exception:
+            return None
+
+        try:
+            session.send_msg(bytes([GET_FILE]))
+            session.send_msg(remote_src.encode("utf-8"))
+
+            buf = bytearray()
+            while True:
+                chunk = session.recv_msg()
+                if chunk is None:
+                    break
+                buf.extend(chunk)
+            return bytes(buf)
+        except Exception:
+            return None
+        finally:
+            session.close()
+
     def run_put(self, local_src: str, remote_dst: str, capture_output: bool = True) -> TshResult:
         """Uploads a local file to the remote server (PUT_FILE)."""
         filename = os.path.basename(local_src)
@@ -408,6 +435,107 @@ class TshClient:
                 sys.stderr.write(err_msg)
             return TshResult(19, stderr=err_msg)
 
+    def run_ps(self, capture_output: bool = True) -> TshResult:
+        """Retrieves and displays running processes from remote /proc."""
+        ls_res = self.run_ls("/proc", capture_output=True)
+        if ls_res.returncode != 0 or not ls_res.stdout:
+            err = "Error: /proc pseudo-filesystem not found or inaccessible on remote target\n"
+            if not capture_output:
+                sys.stderr.write(err)
+            return TshResult(1, stderr=err)
+
+        pids: list[tuple[int, int]] = []
+        for line in ls_res.stdout.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 5 and parts[4].isdigit():
+                pids.append((int(parts[4]), int(parts[1])))
+
+        if not pids:
+            err = "Error: No active processes found in /proc on remote target\n"
+            if not capture_output:
+                sys.stderr.write(err)
+            return TshResult(1, stderr=err)
+
+        def fetch_proc(pid: int, uid: int) -> dict | None:
+            stat_bytes = self.read_file_bytes(f"/proc/{pid}/stat")
+            if not stat_bytes:
+                return None
+
+            stat_str = stat_bytes.decode("utf-8", errors="replace").strip()
+            l = stat_str.find("(")
+            r = stat_str.rfind(")")
+            if l == -1 or r == -1 or r < l:
+                return None
+
+            comm = stat_str[l + 1 : r]
+            rest = stat_str[r + 1 :].strip().split()
+            if len(rest) < 22:
+                return None
+
+            state = rest[0]
+            ppid = rest[1]
+            try:
+                rss_pages = int(rest[21])
+                rss_bytes = rss_pages * 4096
+            except (ValueError, IndexError):
+                rss_bytes = 0
+
+            cmdline_bytes = self.read_file_bytes(f"/proc/{pid}/cmdline")
+            if cmdline_bytes:
+                cmd = (
+                    cmdline_bytes.replace(b"\x00", b" ")
+                    .decode("utf-8", errors="replace")
+                    .strip()
+                )
+            else:
+                cmd = ""
+
+            if not cmd:
+                cmd = f"[{comm}]"
+
+            user_str = "root" if uid == 0 else str(uid)
+            return {
+                "pid": pid,
+                "ppid": int(ppid),
+                "user": user_str,
+                "stat": state,
+                "rss": rss_bytes,
+                "cmd": cmd,
+            }
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            future_to_pid = {executor.submit(fetch_proc, pid, uid): pid for pid, uid in pids}
+            procs = []
+            for future in concurrent.futures.as_completed(future_to_pid):
+                try:
+                    res = future.result()
+                    if res:
+                        procs.append(res)
+                except Exception:
+                    pass
+
+        procs.sort(key=lambda x: x["pid"])
+
+        def format_rss(n_bytes: int) -> str:
+            if n_bytes == 0:
+                return "0B"
+            if n_bytes < 1024 * 1024:
+                return f"{n_bytes // 1024}K"
+            return f"{n_bytes / (1024 * 1024):.1f}M"
+
+        lines = [f"{'PID':>6} {'PPID':>6} {'USER':<8} {'STAT':<4} {'RSS':>8} {'COMMAND'}"]
+        for p in procs:
+            lines.append(
+                f"{p['pid']:>6} {p['ppid']:>6} {p['user']:<8} {p['stat']:<4} {format_rss(p['rss']):>8} {p['cmd']}"
+            )
+        output_str = "\n".join(lines) + "\n"
+
+        if not capture_output:
+            sys.stdout.write(output_str)
+            sys.stdout.flush()
+
+        return TshResult(0, stdout=output_str)
+
     def execute(self, action: str, *args, capture_output: bool = True) -> TshResult:
         """Dispatches an action string (matching the CLI verbs)."""
         try:
@@ -425,6 +553,8 @@ class TshClient:
                 local_src = args[0]
                 remote_dst = args[1] if len(args) > 1 else "."
                 return self.run_put(local_src, remote_dst, capture_output=capture_output)
+            if action == "ps":
+                return self.run_ps(capture_output=capture_output)
             return TshResult(1, stderr=f"Unknown action: {action}\n")
         except (FileNotFoundError, ValueError) as exc:
             err = f"{exc}\n"

@@ -114,6 +114,45 @@ def test_repl_ls_and_file_ops(tshd_daemon, tmp_path, capsys):
     assert repl.last_exit_code == 0
 
 
+def test_repl_ps_command(tshd_daemon, capsys):
+    """Verify 'ps' command execution within REPL and via -c ps flag."""
+    config = tshd_daemon
+    repl = TshRepl(
+        host="localhost",
+        keyfile=config["key_path"],
+        port=config["port"],
+        initial_dir="/",
+    )
+
+    repl.do_ps("")
+    captured = capsys.readouterr()
+    assert repl.last_exit_code == 0
+    assert "PID" in captured.out and "PPID" in captured.out
+    assert "COMMAND" in captured.out
+    assert "tshd" in captured.out
+
+    # Also test via -c flag
+    res = subprocess.run(
+        [
+            "python3",
+            "tsh_client.py",
+            "-k",
+            config["key_path"],
+            "-p",
+            str(config["port"]),
+            "-c",
+            "ps",
+            "localhost",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0
+    assert "PID" in res.stdout and "tshd" in res.stdout
+
+
+
 def test_repl_onecmd_flag(tshd_daemon):
     """Verify single command mode execution (-c) and exit code propagation."""
     config = tshd_daemon
